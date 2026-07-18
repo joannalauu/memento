@@ -303,6 +303,7 @@ class Backboard:
         author_user_id: PydanticObjectId | None = None,
         files: list[str] | None = None,
         symbols: list[str] | None = None,
+        supersedes: list[PydanticObjectId] | None = None,
     ) -> MemoryIndex:
         """Write a repo-scoped memory to Backboard AND mirror it into the local
         ``memoryIndex`` collection in the same call.
@@ -310,6 +311,16 @@ class Backboard:
         The repo is always injected into the content (``[repo: ...]`` prefix)
         and the metadata (``{"repo": ...}``) — callers cannot opt out, because
         the org-level assistant pools memories from every repo.
+
+        The new memory is stamped ``stalenessStatus="fresh"`` directly — no
+        staleness_check/GitHub call needed, since zero commits can have landed
+        between minting it and checking it. ``supersedes`` names prior memory
+        ids this one replaces: each gets ``supersededBy`` set to the new
+        memory's id and its cached status flipped to ``"stale"`` (per
+        staleness_check's own definition of stale: an anchored file changed
+        AND a newer memory now covers the same anchors — which becomes true
+        the instant this memory is created). Missing/already-deleted ids are
+        skipped rather than raising, matching update_memory/delete_memory.
         """
         injected = _inject_repo(repo, content)
         result = await self._client.add_memory(
@@ -318,6 +329,7 @@ class Backboard:
         memory_id = result.get("memory_id")
         if not memory_id:
             raise RuntimeError(f"Backboard add_memory returned no memory_id: {result}")
+        now = datetime.now(timezone.utc)
         index = MemoryIndex(
             orgId=org_id,
             repoId=repo_id,
@@ -330,8 +342,18 @@ class Backboard:
             commitSha=commit_sha,
             authorUserId=author_user_id,
             anchors=Anchors(repo=repo, files=files or [], symbols=symbols or []),
+            stalenessStatus="fresh",
+            stalenessCheckedAt=now,
         )
         await index.insert()
+        for old_id in supersedes or []:
+            old = await MemoryIndex.get(old_id)
+            if old is None:
+                continue
+            old.supersededBy = index.id
+            old.stalenessStatus = "stale"
+            old.stalenessCheckedAt = now
+            await old.save()
         return index
 
     async def update_memory(

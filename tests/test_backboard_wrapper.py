@@ -66,6 +66,57 @@ async def test_add_memory_injects_repo_and_writes_index(bb, captured_insert):
     assert index.anchors.files == ["app/rate_limit.py"]
     assert index.anchors.symbols == ["RateLimiter"]
     assert index.deletedAt is None
+    assert index.stalenessStatus == "fresh"
+    assert index.stalenessCheckedAt is not None
+
+
+async def test_add_memory_supersedes_flips_old_to_stale(
+    bb, captured_insert, monkeypatch
+):
+    bb._client.add_memory.return_value = {"success": True, "memory_id": "mem-new"}
+    old = MemoryIndex.model_construct(
+        bbMemoryId="mem-old", contentSnapshot="old", stalenessStatus="fresh"
+    )
+    saved = []
+
+    async def fake_save(self, *a, **k):
+        saved.append(self)
+        return self
+
+    monkeypatch.setattr(MemoryIndex, "get", AsyncMock(return_value=old))
+    monkeypatch.setattr(MemoryIndex, "save", fake_save)
+
+    index = await bb.add_memory(
+        assistant_id="assistant-1",
+        org_id=PydanticObjectId(),
+        repo_id=PydanticObjectId(),
+        repo="acme/api-server",
+        content="Switched to sliding-window rate limiting",
+        supersedes=[PydanticObjectId()],
+    )
+
+    assert old.supersededBy == index.id
+    assert old.stalenessStatus == "stale"
+    assert old.stalenessCheckedAt is not None
+    assert saved == [old]
+
+
+async def test_add_memory_supersedes_skips_missing_id(bb, captured_insert, monkeypatch):
+    bb._client.add_memory.return_value = {"success": True, "memory_id": "mem-new"}
+    monkeypatch.setattr(MemoryIndex, "get", AsyncMock(return_value=None))
+    save_mock = AsyncMock()
+    monkeypatch.setattr(MemoryIndex, "save", save_mock)
+
+    await bb.add_memory(
+        assistant_id="assistant-1",
+        org_id=PydanticObjectId(),
+        repo_id=PydanticObjectId(),
+        repo="acme/api-server",
+        content="whatever",
+        supersedes=[PydanticObjectId()],
+    )
+
+    save_mock.assert_not_awaited()
 
 
 async def test_add_memory_without_memory_id_raises_and_skips_index(bb, captured_insert):
