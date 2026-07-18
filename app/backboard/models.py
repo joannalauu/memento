@@ -45,6 +45,11 @@ class MemoryIndex(Document):
     mergedFrom: list[PydanticObjectId] | None = None  # consolidation lineage
     archivedContent: str | None = None
     deletedAt: datetime | None = None
+    # Cached staleness (see app/context_engine/staleness.py). Written by the
+    # periodic sweep so the graph renders from a field instead of calling GitHub;
+    # None until first swept. Retrieval may still recompute live for accuracy.
+    stalenessStatus: Literal["fresh", "stale", "gap"] | None = None
+    stalenessCheckedAt: datetime | None = None
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Settings:

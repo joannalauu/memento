@@ -6,14 +6,29 @@ returns a rendered string. `RepoHistory` speaks to *code*: it returns typed data
 staleness check can reason over history instead of parsing prose.
 
 Both are bound to a single repo and share the same installation-token plumbing
-via `GitHubApp.rest`. History below a commit is immutable, so every answer here
-is cacheable per (sha, path) — see the caching note in the staleness ticket.
+via `GitHubApp.rest`. The diff between two fixed commits never changes, so
+`changed_since` memoizes its result on the immutable (owner, repo, base_sha,
+head_sha, path) key indefinitely — a new commit advances head_sha and mints a
+fresh key rather than invalidating an old one. This is the process-level cache
+the staleness ticket calls for.
 """
 
 from datetime import datetime
 
 from app.github.client import GitHubApp, GitHubError
 from app.orgs.models import Org, Repo
+
+# Process-wide cache: (owner, repo, base_sha, head_sha, path) -> commit shas that
+# touched `path` in (base_sha, head_sha]. Both endpoints are fixed commits, so the
+# answer is immutable and kept indefinitely. Cleared wholesale when it hits the
+# cap — crude, but memory stays bounded and a cold miss just re-fetches.
+_CHANGE_CACHE: dict[tuple[str, str, str, str, str], list[str]] = {}
+_CACHE_MAX = 50_000
+
+
+def clear_history_cache() -> None:
+    """Drop the whole change cache (test hook; also the cap-eviction path)."""
+    _CHANGE_CACHE.clear()
 
 
 def _parse_iso(value: object) -> datetime | None:
@@ -47,11 +62,49 @@ class RepoHistory:
         self.owner = owner
         self.repo = repo
         self.default_branch = default_branch
+        # Resolved branch tips this instance has already looked up. Branch tips
+        # move, so this is a per-instance memo (one lookup per sweep/request),
+        # never the durable cross-request cache — that's _CHANGE_CACHE.
+        self._head: dict[str, str] = {}
 
     async def _rest(self, method: str, path: str, **kwargs: object):
         return await self._gh.rest(
             method, path, installation_id=self._installation_id, **kwargs
         )
+
+    async def head_sha(self, ref: str | None = None) -> str:
+        """Current commit sha at the tip of ``ref`` (default branch). Memoized on
+        the instance so one check/sweep resolves each ref only once."""
+        key = ref or self.default_branch
+        if key not in self._head:
+            resp = await self._rest(
+                "GET", f"/repos/{self.owner}/{self.repo}/commits/{key}"
+            )
+            self._head[key] = resp.json()["sha"]
+        return self._head[key]
+
+    async def changed_since(
+        self, path: str, *, base_sha: str, base_date: datetime, head_sha: str
+    ) -> list[str]:
+        """Commit shas that touched ``path`` between ``base_sha`` (exclusive) and
+        ``head_sha`` (inclusive), newest first — empty means it hasn't moved.
+
+        Cached indefinitely on the immutable (base, head, path) triple: the range
+        between two fixed commits can never change. ``base_date`` is the base
+        commit's own timestamp, used only to bound the underlying query."""
+        cache_key = (self.owner, self.repo, base_sha, head_sha, path)
+        cached = _CHANGE_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+        # Query against the resolved head sha (not a moving branch name) so the
+        # fetched range matches the immutable cache key.
+        shas = await self.commits_touching_path_since(
+            path, since=base_date, ref=head_sha
+        )
+        if len(_CHANGE_CACHE) >= _CACHE_MAX:
+            clear_history_cache()
+        _CHANGE_CACHE[cache_key] = shas
+        return shas
 
     async def commit_date(self, sha: str) -> datetime | None:
         """The committer date of ``sha``, or None if the commit is unknown

@@ -21,9 +21,11 @@ aren't history-diffable. The function reads ``memoryIndex`` and calls the repo's
 `RepoHistory` (T2.4); it writes nothing.
 
 Undeterminable movement — the memory has no ``commitSha``, no file anchors, its
-base commit is gone, or every history read failed — never returns ``fresh``:
-without positive evidence the memory can't be vouched current, so it degrades to
-``stale`` when something newer exists, else ``gap``.
+base commit is gone, or a history read failed — reads as ``fresh``: only a
+positively-detected file change ever produces ``stale``/``gap``. Such a verdict
+carries ``commitsSince=None`` (unknown), distinguishing an assumed-fresh memory
+from a confirmed-fresh one (``commitsSince=0``); ``newerMemoryExists`` is still
+reported, so a caller can treat "fresh but superseded" however it likes.
 """
 
 from datetime import datetime, timezone
@@ -65,19 +67,22 @@ async def _changed_since(
     history: RepoHistory,
     files: list[str],
     *,
-    since: datetime,
-    ref: str | None,
+    base_sha: str,
+    base_date: datetime,
+    head_sha: str,
 ) -> tuple[list[str], set[str], bool]:
-    """Per-file history walk. Returns (changed files, distinct commit shas that
-    touched them, complete) — ``complete`` is False if any file's history read
-    failed, so the caller knows the "nothing changed" answer is only partial."""
+    """Per-file history walk between ``base_sha`` and ``head_sha``. Returns
+    (changed files, distinct commit shas that touched them, complete) —
+    ``complete`` is False if any file's history read failed, so the caller knows
+    the "nothing changed" answer is only partial. Each read is cache-backed on
+    the immutable (base, head, path) key."""
     changed: list[str] = []
     shas: set[str] = set()
     complete = True
     for path in files:
         try:
-            path_shas = await history.commits_touching_path_since(
-                path, since=since, ref=ref
+            path_shas = await history.changed_since(
+                path, base_sha=base_sha, base_date=base_date, head_sha=head_sha
             )
         except GitHubError:
             complete = False
@@ -121,26 +126,35 @@ async def staleness_check(
             newerMemoryExists=newer,
         )
 
-    # Undeterminable up front: no baseline sha or no file anchors to diff.
+    # Undeterminable up front: no baseline sha or no file anchors to diff. We
+    # can't detect movement, so we assume the memory is current — commitsSince
+    # stays None (unknown), distinguishing this from a confirmed-fresh 0.
     if not memory_sha or not files:
-        return verdict("stale" if newer else "gap", [], None)
+        return verdict("fresh", [], None)
 
-    # Resolve the baseline commit's date; a missing/GC'd base is undeterminable.
+    # Resolve the baseline commit's date, then the current tip. A missing/GC'd
+    # base or an unresolvable tip is undeterminable — assume fresh.
     try:
         base_date = await history.commit_date(memory_sha)
     except GitHubError:
         base_date = None
     if base_date is None:
-        return verdict("stale" if newer else "gap", [], None)
+        return verdict("fresh", [], None)
+    try:
+        head_sha = await history.head_sha(ref)
+    except GitHubError:
+        return verdict("fresh", [], None)
 
     changed, shas, complete = await _changed_since(
-        history, files, since=base_date, ref=ref
+        history, files, base_sha=memory_sha, base_date=base_date, head_sha=head_sha
     )
     if changed:
+        # The only path with positive evidence of movement: gap unless a newer
+        # memory already covers these anchors (then it's superseded → stale).
         return verdict("stale" if newer else "gap", changed, len(shas))
     if complete:
         # Positively confirmed: nothing anchored moved.
         return verdict("fresh", [], 0)
     # Nothing changed among the files we *could* read, but some reads failed —
-    # can't claim fresh without full coverage.
-    return verdict("stale" if newer else "gap", [], None)
+    # movement is undeterminable, so assume fresh (commitsSince unknown).
+    return verdict("fresh", [], None)

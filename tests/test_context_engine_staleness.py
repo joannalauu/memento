@@ -25,15 +25,21 @@ def make_memory(sha="base-sha", files=("app/a.py",), symbols=(), created=BASE_DA
     )
 
 
+HEAD = "head-sha"
+
+
 class FakeHistory:
     """Stand-in RepoHistory. ``per_path`` maps a path to its commit shas (or an
-    exception to raise); ``base_date`` is returned by commit_date (or raised)."""
+    exception to raise); ``base_date`` is returned by commit_date, ``head`` by
+    head_sha (either may be an exception to raise)."""
 
-    def __init__(self, base_date=BASE_DATE, per_path=None):
+    def __init__(self, base_date=BASE_DATE, per_path=None, head=HEAD):
         self._base_date = base_date
         self._per_path = per_path or {}
-        self.path_calls: list[tuple] = []
+        self._head = head
+        self.path_calls: list[tuple] = []  # (path, base_sha, base_date, head_sha)
         self.date_calls: list[str] = []
+        self.head_calls: list[str | None] = []
 
     async def commit_date(self, sha):
         self.date_calls.append(sha)
@@ -41,8 +47,14 @@ class FakeHistory:
             raise self._base_date
         return self._base_date
 
-    async def commits_touching_path_since(self, path, *, since, ref=None):
-        self.path_calls.append((path, since, ref))
+    async def head_sha(self, ref=None):
+        self.head_calls.append(ref)
+        if isinstance(self._head, Exception):
+            raise self._head
+        return self._head
+
+    async def changed_since(self, path, *, base_sha, base_date, head_sha):
+        self.path_calls.append((path, base_sha, base_date, head_sha))
         value = self._per_path.get(path, [])
         if isinstance(value, Exception):
             raise value
@@ -72,8 +84,8 @@ async def test_fresh_when_no_anchored_file_moved(no_newer):
     assert v.commitsSince == 0
     assert v.newerMemoryExists is False
     assert v.memoryCommitSha == "base-sha"
-    # the base commit date bounded the per-path query
-    assert history.path_calls == [("app/a.py", BASE_DATE, None)]
+    # the per-path query is bounded by the base date and pinned to the head sha
+    assert history.path_calls == [("app/a.py", "base-sha", BASE_DATE, HEAD)]
 
 
 async def test_gap_when_file_moved_and_nothing_newer(no_newer):
@@ -103,54 +115,57 @@ async def test_commits_since_counts_distinct_across_files(no_newer):
     assert v.commitsSince == 3
 
 
-# ─── undeterminable cases never claim fresh ───────────────────────────────────
+# ─── undeterminable movement reads as fresh (commitsSince unknown) ─────────────
 
 
-async def test_missing_commit_sha_is_gap_without_touching_history(no_newer):
+async def test_missing_commit_sha_is_fresh_without_touching_history(no_newer):
     history = FakeHistory()
     v = await staleness_check(make_memory(sha=None), history=history)
-    assert v.status == "gap"
+    assert v.status == "fresh"
     assert v.memoryCommitSha == ""
-    assert v.commitsSince is None
+    assert v.commitsSince is None  # unknown, not a confirmed 0
     assert history.date_calls == [] and history.path_calls == []
 
 
-async def test_missing_commit_sha_with_newer_is_stale(has_newer):
+async def test_missing_commit_sha_is_fresh_even_with_newer(has_newer):
+    # Un-checkable movement reads fresh; the supersession signal is still
+    # surfaced on the verdict for callers that care.
     v = await staleness_check(make_memory(sha=""), history=FakeHistory())
-    assert v.status == "stale"
+    assert v.status == "fresh"
+    assert v.newerMemoryExists is True
 
 
-async def test_no_file_anchors_is_gap(no_newer):
+async def test_no_file_anchors_is_fresh(no_newer):
     v = await staleness_check(
         make_memory(files=[], symbols=["Foo"]), history=FakeHistory()
     )
-    assert v.status == "gap"
+    assert v.status == "fresh"
     assert v.commitsSince is None
 
 
-async def test_base_commit_gone_is_undeterminable(no_newer):
+async def test_base_commit_gone_is_fresh(no_newer):
     history = FakeHistory(base_date=None)  # commit_date -> None (404/GC'd)
     v = await staleness_check(make_memory(), history=history)
-    assert v.status == "gap"
+    assert v.status == "fresh"
     assert v.commitsSince is None
     assert history.path_calls == []  # never probed paths without a baseline
 
 
-async def test_partial_history_failure_does_not_claim_fresh(no_newer):
-    # one path reads clean, the other errors — can't confirm fresh.
+async def test_partial_history_failure_reads_fresh(no_newer):
+    # one path reads clean, the other errors — movement is undeterminable.
     history = FakeHistory(per_path={"app/a.py": [], "app/b.py": GitHubError("boom")})
     v = await staleness_check(
         make_memory(files=["app/a.py", "app/b.py"]), history=history
     )
-    assert v.status == "gap"
+    assert v.status == "fresh"
     assert v.changedFiles == []
-    assert v.commitsSince is None
+    assert v.commitsSince is None  # unknown, distinct from confirmed-fresh 0
 
 
-async def test_commit_date_error_propagating_is_undeterminable(no_newer):
+async def test_commit_date_error_propagating_is_fresh(no_newer):
     history = FakeHistory(base_date=GitHubError("500"))
     v = await staleness_check(make_memory(), history=history)
-    assert v.status == "gap"
+    assert v.status == "fresh"
     assert v.commitsSince is None
 
 
@@ -167,7 +182,17 @@ async def test_anchors_override_and_ref_are_used(no_newer):
         ref="release",
     )
     assert v.status == "fresh"
-    assert history.path_calls == [("override/x.py", BASE_DATE, "release")]
+    # ref flows to head resolution; the override's file is what gets probed
+    assert history.head_calls == ["release"]
+    assert history.path_calls == [("override/x.py", "base-sha", BASE_DATE, HEAD)]
+
+
+async def test_head_unresolvable_reads_fresh(no_newer):
+    history = FakeHistory(head=GitHubError("no such ref"))
+    v = await staleness_check(make_memory(), history=history)
+    assert v.status == "fresh"
+    assert v.commitsSince is None
+    assert history.path_calls == []  # never probed without a head
 
 
 async def test_checked_at_is_iso_timestamp(no_newer):
