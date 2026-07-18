@@ -12,6 +12,7 @@ from app.orgs.crud import (
     delete_org,
     get_org,
     get_org_invite,
+    list_org_members,
     list_repos_for_org,
     update_org,
 )
@@ -20,6 +21,7 @@ from app.orgs.schemas import (
     OrgCreate,
     OrgInviteCreate,
     OrgInviteRead,
+    OrgMemberRead,
     OrgRead,
     OrgUpdate,
     RepoRead,
@@ -63,6 +65,27 @@ async def get_org_endpoint(
             detail="Not a member of this org",
         )
     return org
+
+
+@router.get("/{org_id}/members", response_model=list[OrgMemberRead])
+async def list_org_members_endpoint(
+    org_id: PydanticObjectId,
+    user: User = Depends(get_current_user),
+) -> list[OrgMemberRead]:
+    """List an org's members with each userId reference resolved to the full
+    user object. Only a member of the org may view them."""
+    org: Org = await get_org(org_id)
+    if org is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Org not found"
+        )
+    is_member = any(m.userId == user.id for m in org.members)
+    if not is_member:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a member of this org",
+        )
+    return await list_org_members(org)
 
 
 @router.get("/{org_id}/repos", response_model=list[RepoRead])

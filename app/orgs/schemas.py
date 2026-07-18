@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from beanie import PydanticObjectId
 from pydantic import BaseModel, ConfigDict
@@ -25,6 +26,27 @@ class OrgRead(BaseModel):
     bbAssistantId: str
     members: list[OrgMember]
     createdAt: datetime
+
+
+class UserPublic(BaseModel):
+    """Non-sensitive user fields safe to surface to other org members."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: PydanticObjectId
+    email: str
+    name: str | None = None
+    role: str | None = None
+    githubUsername: str | None = None
+    createdAt: datetime
+
+
+class OrgMemberRead(BaseModel):
+    """An org member with the userId reference resolved to the full user."""
+
+    user: UserPublic
+    role: Literal["admin", "member"]
+    joinedAt: datetime
 
 
 class RepoRead(BaseModel):

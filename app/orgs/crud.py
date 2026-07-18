@@ -4,8 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 from beanie import PydanticObjectId
 
-from app.orgs.models import Org, OrgInvite, OrgMember, Repo
-from app.orgs.schemas import OrgUpdate
+from app.orgs.models import Org, OrgInvite, OrgMember, Repo, User
+from app.orgs.schemas import OrgMemberRead, OrgUpdate, UserPublic
 
 # Org invites remain valid for 3 days from creation.
 ORG_INVITE_EXPIRY = timedelta(days=3)
@@ -64,6 +64,29 @@ async def delete_org(org: Org) -> None:
 async def list_repos_for_org(org_id: PydanticObjectId) -> list[Repo]:
     """List an org's repos, newest first."""
     return await Repo.find(Repo.orgId == org_id).sort(-Repo.createdAt).to_list()
+
+
+async def list_org_members(org: Org) -> list[OrgMemberRead]:
+    """Resolve an org's member list, replacing each userId reference with the
+    full user object. Users are fetched in a single batched query; a member
+    whose user document has since been deleted is skipped, and the result
+    preserves the org's member ordering."""
+    user_ids = [m.userId for m in org.members]
+    users = await User.find({"_id": {"$in": user_ids}}).to_list()
+    users_by_id = {u.id: u for u in users}
+    resolved: list[OrgMemberRead] = []
+    for member in org.members:
+        user = users_by_id.get(member.userId)
+        if user is None:
+            continue
+        resolved.append(
+            OrgMemberRead(
+                user=UserPublic.model_validate(user),
+                role=member.role,
+                joinedAt=member.joinedAt,
+            )
+        )
+    return resolved
 
 
 async def create_org_invite(*, org_id: PydanticObjectId, email: str) -> OrgInvite:
