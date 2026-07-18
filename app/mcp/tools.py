@@ -31,6 +31,7 @@ from app.github.client import GitHubApp
 from app.github.tools import build_github_toolset
 from app.orgs.crud import list_org_members, list_repos_for_org
 from app.orgs.models import Org, Repo
+from app.traversal import Source
 
 
 class McpToolError(Exception):
@@ -47,6 +48,13 @@ class McpContext:
     org: Org
     github: GitHubApp
     backboard: Backboard
+    # Traversal tagging: a graph-tool handler forwards these into
+    # find_entry_points/walk_graph so emitted events route to the caller's graph
+    # view. `session_id` comes off the X-Session-Id request header (None when the
+    # client doesn't send one — emission is then a no-op); `source` is always the
+    # MCP surface.
+    session_id: str | None = None
+    source: Source = "mcp"
 
 
 ToolHandler = Callable[[McpContext, dict[str, Any]], Awaitable[Any]]

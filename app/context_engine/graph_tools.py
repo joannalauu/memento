@@ -38,6 +38,7 @@ from app.graph.ids import (
     short_label,
 )
 from app.orgs.models import User
+from app.traversal import Source, TraversalTag, traversal_channel
 
 ENTRY_POINT_LIMIT = 5
 WALK_MAX_DEPTH = 2  # hard cap — multi-hop subgraphs balloon agent context
@@ -108,6 +109,8 @@ async def find_entry_points(
     org_id: PydanticObjectId,
     repo_id: PydanticObjectId | None = None,
     limit: int = ENTRY_POINT_LIMIT,
+    session_id: str | None = None,
+    source: Source = "mcp",
 ) -> list[EntryPoint]:
     """Semantic entry: map a natural-language query to graph nodes to walk from.
 
@@ -116,6 +119,10 @@ async def find_entry_points(
     dropped — an entry point must be a node you can actually walk. Backboard
     failures propagate (unlike `find_related_context`, there is no structural
     source to degrade to here — the caller asked to enter *semantically*).
+
+    Passing `session_id` emits one `entry` traversal event per landed node so a
+    graph view can highlight where the agent entered; omit it and emission is a
+    no-op (`source` is then irrelevant). `source` tags where the call originated.
     """
     result = await bb.search_memories(assistant_id, query, limit=limit)
     hits = result.get("memories", []) if isinstance(result, dict) else []
@@ -151,8 +158,18 @@ async def find_entry_points(
                 # isCommunityReport stays False until community reports land (T4b).
             )
         )
-    # T4.3/T4.6: a traversal "entry_points_found" event would fire here so the
-    # graph UI can highlight where the agent entered — event infra is a later ticket.
+    # One entry event per landed node, so a graph view can highlight where the
+    # agent entered. A no-op without a session (tag is None).
+    tag = TraversalTag(session_id, source) if session_id else None
+    if tag is not None:
+        for entry in entries:
+            traversal_channel.publish(
+                tag,
+                kind="entry",
+                node_id=entry.nodeId,
+                edge_kind=None,
+                from_node_id=None,
+            )
     return entries
 
 
@@ -220,6 +237,7 @@ async def _neighbors_of(
     *,
     doc: MemoryIndex | None,
     exclude: str | None,
+    tag: TraversalTag | None = None,
 ) -> tuple[dict[WalkEdgeKind, list[WalkNeighbor]], bool]:
     """One node's neighbors grouped by edge kind. `edge_kinds` filters *before*
     querying (directed traversal — an unwanted kind costs no query at all).
@@ -333,9 +351,22 @@ async def _neighbors_of(
         if docs:
             groups["belongs_to"] = [_decision_neighbor(d) for d in docs]
 
-    # T4.3/T4.6: a traversal "node_visited" event would fire here, once per
-    # directed hop (so depth-2 sub-walks animate too) — event infra is a later ticket.
-    return _finalize_groups(groups, exclude)
+    out, truncated = _finalize_groups(groups, exclude)
+    # One hop event per neighbor actually returned (origin excluded, per-kind
+    # caps applied) so a graph view animates in lockstep with the walk — fired
+    # here, per directed hop, so depth-2 sub-walks animate too. `node_id` is the
+    # origin of these edges (the hop's `fromNodeId`). A no-op without a session.
+    if tag is not None:
+        for kind, neighbors in out.items():
+            for neighbor in neighbors:
+                traversal_channel.publish(
+                    tag,
+                    kind="hop",
+                    node_id=neighbor.nodeId,
+                    edge_kind=kind,
+                    from_node_id=node_id,
+                )
+    return out, truncated
 
 
 async def _neighbors_for_node_id(
@@ -344,6 +375,7 @@ async def _neighbors_for_node_id(
     edge_kinds: frozenset[WalkEdgeKind] | None,
     *,
     exclude: str | None,
+    tag: TraversalTag | None = None,
 ) -> tuple[dict[WalkEdgeKind, list[WalkNeighbor]], bool]:
     """Load whatever a node id needs, then delegate to `_neighbors_of` — used
     for the second hop, where we hold ids but not the pre-loaded docs."""
@@ -353,7 +385,9 @@ async def _neighbors_for_node_id(
         doc = await _load_one_decision(org_id, parsed.rest)
         if doc is None:  # neighbor decision vanished mid-walk; skip it
             return {}, False
-    return await _neighbors_of(node_id, org_id, edge_kinds, doc=doc, exclude=exclude)
+    return await _neighbors_of(
+        node_id, org_id, edge_kinds, doc=doc, exclude=exclude, tag=tag
+    )
 
 
 async def walk_graph(
@@ -362,6 +396,8 @@ async def walk_graph(
     org_id: PydanticObjectId,
     edge_kinds: frozenset[WalkEdgeKind] | None = None,
     depth: int = 1,
+    session_id: str | None = None,
+    source: Source = "mcp",
 ) -> GraphWalk:
     """Directed local walk from `node_id`, neighbors grouped by edge kind.
 
@@ -369,6 +405,10 @@ async def walk_graph(
     relationships (e.g. `{"superseded_by"}` to trace an evolution chain).
     `depth=2` expands each neighbor one further hop (the walk origin is excluded
     from those sub-groups); depth is hard-capped at 2 to bound context.
+
+    Passing `session_id` emits one `hop` traversal event per neighbor returned
+    (including the depth-2 sub-hops) so a graph view can animate the walk; omit
+    it and emission is a no-op. `source` tags where the call originated.
     """
     if depth < 1 or depth > WALK_MAX_DEPTH:
         raise ValueError(f"depth must be 1..{WALK_MAX_DEPTH}, got {depth}")
@@ -388,13 +428,14 @@ async def walk_graph(
         origin_label = _virtual_label(parsed.type, parsed.rest)
         origin_snapshot = None
 
+    tag = TraversalTag(session_id, source) if session_id else None
     groups, truncated = await _neighbors_of(
-        node_id, org_id, edge_kinds, doc=doc, exclude=None
+        node_id, org_id, edge_kinds, doc=doc, exclude=None, tag=tag
     )
 
     if depth == WALK_MAX_DEPTH:
         second_hop_truncated = await _expand_second_hop(
-            groups, org_id, edge_kinds, origin=node_id
+            groups, org_id, edge_kinds, origin=node_id, tag=tag
         )
         truncated = truncated or second_hop_truncated
 
@@ -424,6 +465,7 @@ async def _expand_second_hop(
     edge_kinds: frozenset[WalkEdgeKind] | None,
     *,
     origin: str,
+    tag: TraversalTag | None = None,
 ) -> bool:
     """Attach each neighbor's own neighbors (origin excluded); return whether
     any sub-group was capped."""
@@ -432,7 +474,9 @@ async def _expand_second_hop(
         return False
     sub_results = await asyncio.gather(
         *(
-            _neighbors_for_node_id(n.nodeId, org_id, edge_kinds, exclude=origin)
+            _neighbors_for_node_id(
+                n.nodeId, org_id, edge_kinds, exclude=origin, tag=tag
+            )
             for n in all_neighbors
         )
     )

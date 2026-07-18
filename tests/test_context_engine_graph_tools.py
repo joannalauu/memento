@@ -11,6 +11,7 @@ from app.backboard.models import Anchors, MemoryIndex
 from app.context_engine import graph_tools
 from app.context_engine.graph_tools import find_entry_points, walk_graph
 from app.graph.ids import decision_id, engineer_id, feature_id, file_id, pr_id
+from app.traversal import traversal_channel
 
 ORG_ID = PydanticObjectId()
 REPO = "acme/api-server"
@@ -112,6 +113,23 @@ def walk_env(monkeypatch):
     monkeypatch.setattr(graph_tools, "_find_decisions", fake_find)
     monkeypatch.setattr(graph_tools, "_names_by_user_id", fake_names)
     return docs, queries, names
+
+
+@pytest.fixture
+def subscribe_traversal():
+    """Capture traversal events for a session id off the shared channel; the
+    subscription is torn down after the test. Each test uses a unique session id
+    so its seq counter starts fresh at 0."""
+    unsubs = []
+
+    def _subscribe(session_id):
+        events = []
+        unsubs.append(traversal_channel.subscribe(session_id, events.append))
+        return events
+
+    yield _subscribe
+    for unsub in unsubs:
+        unsub()
 
 
 # --- find_entry_points -------------------------------------------------------
@@ -363,3 +381,97 @@ async def test_walk_dangling_superseded_by_dropped(walk_env):
     walk = await walk_graph(decision_id(a.id), org_id=ORG_ID)
 
     assert "superseded_by" not in walk.neighbors
+
+
+# --- traversal event emission ------------------------------------------------
+
+
+async def test_find_entry_points_emits_entry_event_per_landed_node(
+    bb, entry_docs, subscribe_traversal
+):
+    docs, _ = entry_docs
+    docs.append(make_doc(bb_id="bb-1"))
+    docs.append(make_doc(bb_id="bb-2"))
+    bb.search_memories.return_value = semantic_result(hit("bb-2"), hit("bb-1"))
+    events = subscribe_traversal("sess-entry")
+
+    result = await find_entry_points(
+        "auth", bb=bb, assistant_id="a", org_id=ORG_ID, session_id="sess-entry"
+    )
+
+    # one entry event per landed node, in the same rank order, edges empty
+    assert [(e.kind, e.nodeId, e.edgeKind, e.fromNodeId) for e in events] == [
+        ("entry", r.nodeId, None, None) for r in result
+    ]
+    assert [e.seq for e in events] == [0, 1]
+    assert all(e.source == "mcp" and e.sessionId == "sess-entry" for e in events)
+
+
+async def test_walk_emits_hop_event_per_returned_neighbor(
+    walk_env, subscribe_traversal
+):
+    docs, _, names = walk_env
+    author = PydanticObjectId()
+    names[author] = "Ada"
+    origin = make_doc(
+        bb_id="bb-origin", files=["app/auth.py"], prNumber=7, authorUserId=author
+    )
+    docs.append(origin)
+    events = subscribe_traversal("sess-hop")
+
+    walk = await walk_graph(
+        decision_id(origin.id), org_id=ORG_ID, session_id="sess-hop", source="web"
+    )
+
+    # every hop event is (edgeKind, neighbor) with the origin as fromNodeId, and
+    # the set of hops matches exactly the neighbors the walk returned
+    emitted = {(e.edgeKind, e.nodeId) for e in events}
+    returned = {(kind, n.nodeId) for kind, ns in walk.neighbors.items() for n in ns}
+    assert emitted == returned
+    assert all(
+        e.kind == "hop" and e.fromNodeId == decision_id(origin.id) and e.source == "web"
+        for e in events
+    )
+
+
+async def test_entry_then_walk_share_monotonic_session_seq(
+    bb, entry_docs, walk_env, subscribe_traversal
+):
+    # entry_docs patches _entry_lookup; walk_env patches _find_decisions — both
+    # active so a single session can enter then walk.
+    entry_list, _ = entry_docs
+    walk_docs, _, _ = walk_env
+    origin = make_doc(bb_id="bb-1", files=["app/auth.py"])
+    entry_list.append(origin)
+    walk_docs.append(origin)
+    bb.search_memories.return_value = semantic_result(hit("bb-1"))
+    events = subscribe_traversal("sess-both")
+
+    await find_entry_points(
+        "q", bb=bb, assistant_id="a", org_id=ORG_ID, session_id="sess-both"
+    )
+    await walk_graph(decision_id(origin.id), org_id=ORG_ID, session_id="sess-both")
+
+    # seq is monotonic across the two tool calls: entry (0), then the hop(s)
+    assert [e.seq for e in events] == list(range(len(events)))
+    assert events[0].kind == "entry"
+    assert events[-1].kind == "hop"
+
+
+async def test_no_session_id_emits_nothing(
+    bb, entry_docs, walk_env, subscribe_traversal
+):
+    entry_list, _ = entry_docs
+    walk_docs, _, _ = walk_env
+    origin = make_doc(bb_id="bb-1", files=["app/auth.py"])
+    entry_list.append(origin)
+    walk_docs.append(origin)
+    bb.search_memories.return_value = semantic_result(hit("bb-1"))
+    # subscribe to the default source's session key the tools would use if they
+    # leaked one; nothing should arrive because no session_id was passed.
+    events = subscribe_traversal("mcp")
+
+    await find_entry_points("q", bb=bb, assistant_id="a", org_id=ORG_ID)
+    await walk_graph(decision_id(origin.id), org_id=ORG_ID)
+
+    assert events == []

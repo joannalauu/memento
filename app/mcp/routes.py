@@ -45,6 +45,9 @@ async def mcp_endpoint(
         org=org,
         github=request.app.state.github,
         backboard=request.app.state.backboard,
+        # Optional client-supplied session key; a graph-tool handler forwards it
+        # so traversal events route to that session's graph view (T4.5/T5.2).
+        session_id=request.headers.get("X-Session-Id"),
     )
 
     # A JSON-RPC batch (list) is handled per-message; notifications drop out.
