@@ -65,6 +65,15 @@ class TraversalChannel:
             cb(event)
         return event
 
+    def current_seq(self, session_id: str) -> int:
+        """The next seq that will be assigned for this session (0 if none seen).
+
+        A transport reads this on (re)subscribe to detect a gap: an event's
+        ``seq`` below this value means steps were emitted while nobody was
+        listening (the channel buffers nothing), so a reconnecting view knows
+        it missed steps and should refresh its static graph."""
+        return self._seq.get(session_id, 0)
+
     def subscribe(self, session_id: str, cb: Subscriber) -> Callable[[], None]:
         """Register ``cb`` for a session; returns an idempotent unsubscribe."""
         self._subscribers[session_id].add(cb)

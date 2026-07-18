@@ -14,6 +14,7 @@ from app.api_auth.dependencies import ApiKeyPrincipal, get_api_key_principal
 from app.mcp.server import PROTOCOL_VERSION, dispatch, error_response
 from app.mcp.tools import McpContext
 from app.orgs.crud import get_org
+from app.traversal import active_sessions
 
 router = APIRouter()
 
@@ -49,6 +50,12 @@ async def mcp_endpoint(
         # so traversal events route to that session's graph view (T4.5/T5.2).
         session_id=request.headers.get("X-Session-Id"),
     )
+
+    # Every MCP tool call flows through here, so this is the single write point
+    # for "the user's most recent active session in this org" — a live graph
+    # view (T4.6a) reads it to auto-follow the caller's latest activity.
+    if ctx.session_id:
+        active_sessions.record(str(principal.user.id), str(org.id), ctx.session_id)
 
     # A JSON-RPC batch (list) is handled per-message; notifications drop out.
     if isinstance(body, list):

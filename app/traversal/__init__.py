@@ -10,12 +10,15 @@ from app.traversal.schemas import (
     TraversalEventKind,
     TraversalTag,
 )
+from app.traversal.sessions import ActiveSessionRegistry, active_sessions
 
 __all__ = [
+    "ActiveSessionRegistry",
     "Source",
     "TraversalChannel",
     "TraversalEvent",
     "TraversalEventKind",
     "TraversalTag",
+    "active_sessions",
     "traversal_channel",
 ]

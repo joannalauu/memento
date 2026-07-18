@@ -12,3 +12,11 @@
 export const API_BASE_URL: string = (
   import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000"
 ).replace(/\/+$/, "")
+
+/**
+ * WebSocket origin for the live traversal channel (`WS /orgs/{orgId}/graph/live`),
+ * derived from {@link API_BASE_URL} by swapping the scheme (`http`->`ws`,
+ * `https`->`wss`). The same session cookie rides the WS handshake, so — like the
+ * fetch layer — no token is handled in JS.
+ */
+export const WS_BASE_URL: string = API_BASE_URL.replace(/^http/, "ws")
