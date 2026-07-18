@@ -192,6 +192,46 @@ async def test_cache_hits_within_ttl_and_keys_by_scope(graph_env):
     assert len(queries) == 3  # rebuilt after TTL
 
 
+async def test_expired_scopes_and_their_locks_are_evicted(graph_env):
+    # Regression: distinct filter scopes used to accumulate in _cache/_cache_locks
+    # forever (repo/feature/types are client-supplied) — a memory leak. Expired
+    # entries and their orphaned locks must be reclaimed, not just overwritten.
+    decisions, _, _ = graph_env
+    decisions.append(make_decision(files=["a.py"]))
+
+    for i in range(5):
+        await get_graph_cached(ORG_ID, feature=f"feat-{i}")
+    assert len(crud._cache) == 5
+    assert len(crud._cache_locks) == 5  # one lock per scope
+
+    # Age every entry past the TTL, then make one fresh request (the slow path,
+    # which is what triggers the prune).
+    for k, (_, payload) in list(crud._cache.items()):
+        crud._cache[k] = (crud.time.monotonic() - 1, payload)
+    await get_graph_cached(ORG_ID, feature="new")
+
+    # Only the just-built scope survives; the 5 dead scopes and their locks are
+    # gone rather than lingering for the life of the process.
+    assert list(crud._cache) == [(str(ORG_ID), None, "new", None)]
+    assert set(crud._cache_locks) <= set(crud._cache)
+
+
+async def test_cache_size_is_capped(graph_env, monkeypatch):
+    # Even within the TTL window, a burst of distinct scopes can't grow the cache
+    # without bound — it's capped, evicting the entries closest to expiry.
+    decisions, _, queries = graph_env
+    decisions.append(make_decision(files=["a.py"]))
+    monkeypatch.setattr(crud, "GRAPH_CACHE_MAX_ENTRIES", 3)
+
+    for i in range(10):
+        await get_graph_cached(ORG_ID, feature=f"f{i}")
+
+    assert len(queries) == 10  # every distinct scope was built
+    # Prune caps to MAX before each insert, so steady state is at most MAX + 1.
+    assert len(crud._cache) <= crud.GRAPH_CACHE_MAX_ENTRIES + 1
+    assert set(crud._cache_locks) <= set(crud._cache)
+
+
 # --- route: GET /orgs/{org_id}/graph ---
 
 MEMBER_ID = PydanticObjectId()

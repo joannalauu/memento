@@ -40,10 +40,45 @@ from app.graph.schemas import (
 from app.orgs.models import User
 
 GRAPH_CACHE_TTL = 60.0  # seconds; new nodes only appear when a PR is distilled
+# Hard cap on distinct cached scopes. repo/feature/types come straight off the
+# request, so the (org, repo, feature, types) key space is unbounded — without a
+# cap every novel filter combo would retain a full GraphPayload (and a lock) for
+# the life of the process. Over the cap we evict the entries closest to expiry.
+GRAPH_CACHE_MAX_ENTRIES = 256
 
 _CacheKey = tuple[str, str | None, str | None, tuple[str, ...] | None]
 _cache: dict[_CacheKey, tuple[float, GraphPayload]] = {}
 _cache_locks: dict[_CacheKey, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+
+def _prune_cache(now: float) -> None:
+    """Bound both cache dicts so distinct scopes can't leak memory.
+
+    Runs synchronously (no await) from ``get_graph_cached``, so it's atomic on
+    the event loop — no other coroutine mutates the dicts mid-prune.
+
+    1. Drop expired entries: a scope not re-requested within the TTL is dead
+       weight that nothing else ever removes (a fresh request only overwrites its
+       *own* key).
+    2. If still over the cap, evict the entries closest to expiry.
+    3. Drop locks whose scope is no longer cached and that nobody holds, so the
+       lock dict can't outgrow the live entries. A lock that isn't ``locked()``
+       has no waiters, so dropping it is safe — a later request just mints a
+       fresh one via the defaultdict.
+    """
+    for key in [k for k, (exp, _) in _cache.items() if exp <= now]:
+        del _cache[key]
+
+    overflow = len(_cache) - GRAPH_CACHE_MAX_ENTRIES
+    if overflow > 0:
+        oldest = sorted(_cache.items(), key=lambda kv: kv[1][0])[:overflow]
+        for key, _ in oldest:
+            del _cache[key]
+
+    for key in [
+        k for k, lock in _cache_locks.items() if k not in _cache and not lock.locked()
+    ]:
+        del _cache_locks[key]
 
 
 def _parse_oid(raw: str) -> PydanticObjectId | None:
@@ -360,6 +395,8 @@ async def get_graph_cached(
     cached = _cache.get(key)
     if cached and time.monotonic() < cached[0]:
         return cached[1]
+    # Slow path only: keep hits fast, but bound the dicts before we may grow them.
+    _prune_cache(time.monotonic())
     async with _cache_locks[key]:
         cached = _cache.get(key)
         if cached and time.monotonic() < cached[0]:
