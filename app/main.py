@@ -3,6 +3,7 @@ from app.claude_hook.routes import router as claude_hook_router
 from app.file_upload.routes import router as documents_router
 from app.github.routes import router as github_router
 from app.hackplate import Hackplate
+from app.mcp.routes import router as mcp_router
 from app.hackplate.lifespan import configure
 from app.lifespan import lifespan, pre_hackplate_lifespan
 from app.orgs.routes import router as orgs_router
@@ -20,6 +21,7 @@ def register_routes(app: Hackplate) -> None:
     app.include_router(claude_hook_router, prefix="/ingest", tags=["ingest"])
     app.include_router(documents_router, prefix="/documents", tags=["documents"])
     app.include_router(github_router, prefix="/github", tags=["github"])
+    app.include_router(mcp_router, prefix="/mcp", tags=["mcp"])
 
 
 app = Hackplate(
