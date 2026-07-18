@@ -43,7 +43,7 @@ asyncio_mode = "auto"
 [tool.hackplate]
 # The user model used by the auth plate. Must inherit from AbstractUser (SQL plates)
 # or AbstractUserDocument (mongo plate). Change this if you define a custom user model.
-auth_user_model = "app.hackplate.user.models.UserDocument"
+auth_user_model = "app.orgs.models.User"
 
 [tool.hackplate.db]
 # Set to true to manage schema with Alembic migrations.
