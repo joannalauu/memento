@@ -14,7 +14,7 @@ export const HOOK_EVENT = "SessionEnd" as const;
 export const HOOK_TIMEOUT_SECONDS = 15;
 
 /** Default ingest base URL. Override at install time (--url) or via env. */
-export const DEFAULT_BASE_URL = "https://memento-zxan.onrender.com";
+export const DEFAULT_BASE_URL = "https://api.memento-ai.ca/";
 
 /** Ingest path appended to the base URL. */
 export const INGEST_PATH = "/ingest/agent-sessions";

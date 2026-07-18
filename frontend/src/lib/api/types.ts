@@ -150,13 +150,15 @@ export type EdgeKind =
   | "made"
   | "belongs_to"
   | "superseded_by"
+export type StalenessStatus = "fresh" | "stale" | "gap"
+export type Confidence = "verified" | "unverified"
 
 export interface GraphNodeMeta {
   prNumber?: number | null
   author?: string | null
   date?: ISODateString | null
-  stalenessStatus?: "fresh" | "stale" | "gap" | null
-  confidence?: "verified" | "unverified" | null
+  stalenessStatus?: StalenessStatus | null
+  confidence?: Confidence | null
   path?: string | null
   decisionCount?: number | null
 }
@@ -190,6 +192,40 @@ export interface GraphFilters {
   feature?: string
   /** Node types to include, e.g. `["decision", "feature"]`. */
   types?: NodeType[]
+}
+
+/** A decision reachable from a non-decision node — a clickable hop target.
+ * `id` is the graph node id (`dec:<oid>`). */
+export interface RelatedDecision {
+  id: string
+  label: string
+  prNumber?: number | null
+  author?: string | null
+  date: ISODateString
+  stalenessStatus?: StalenessStatus | null
+}
+
+/** Full detail for one node (`GET /orgs/{org_id}/graph/nodes/{node_id}`).
+ * Decision nodes carry the complete snapshot + provenance; every other node
+ * type carries the decisions it connects to (`relatedDecisions`). */
+export interface NodeDetail {
+  id: string
+  type: NodeType
+  label: string
+  // decision nodes
+  contentSnapshot?: string | null
+  prNumber?: number | null
+  prUrl?: string | null
+  author?: string | null
+  date?: ISODateString | null
+  feature?: string | null
+  files?: string[] | null
+  symbols?: string[] | null
+  stalenessStatus?: StalenessStatus | null
+  confidence?: Confidence | null
+  supersededBy?: string | null
+  // non-decision nodes (file, pr, engineer, feature)
+  relatedDecisions?: RelatedDecision[] | null
 }
 
 // ─── documents (app/file_upload/schemas.py) ──────────────────────────────────

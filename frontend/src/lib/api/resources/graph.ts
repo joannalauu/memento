@@ -9,7 +9,25 @@ import { useQuery, type UseQueryOptions } from "@tanstack/react-query"
 
 import { request } from "../http"
 import { queryKeys } from "../query-keys"
-import type { GraphFilters, GraphPayload, ObjectId } from "../types"
+import type {
+  GraphFilters,
+  GraphPayload,
+  NodeDetail,
+  ObjectId,
+} from "../types"
+
+/**
+ * A node id rides the backend's `{node_id:path}` segment raw — it embeds ':'
+ * and '/' (e.g. `file:owner/name:src/app.py`). Percent-encode each '/'-split
+ * segment so a node's own '#'/'?'/space can't leak into the query or fragment,
+ * while the structural '/' separators pass through untouched.
+ */
+function encodeNodeId(nodeId: string): string {
+  return nodeId
+    .split("/")
+    .map((seg) => encodeURIComponent(seg))
+    .join("/")
+}
 
 export const graphApi = {
   get: (orgId: ObjectId, filters?: GraphFilters, signal?: AbortSignal) =>
@@ -22,6 +40,17 @@ export const graphApi = {
         types: filters?.types?.length ? filters.types.join(",") : undefined,
       },
     }),
+
+  /**
+   * `GET /orgs/{org_id}/graph/nodes/{node_id}` — detail for one clicked node.
+   * Decision nodes return the full snapshot + PR link / author / date; other
+   * node types return the decisions they connect to, so a click becomes a hop.
+   */
+  getNode: (orgId: ObjectId, nodeId: string, signal?: AbortSignal) =>
+    request<NodeDetail>(
+      `/orgs/${orgId}/graph/nodes/${encodeNodeId(nodeId)}`,
+      { signal },
+    ),
 }
 
 export function useOrgGraph(
@@ -34,6 +63,24 @@ export function useOrgGraph(
     queryFn: ({ signal }) => graphApi.get(orgId as ObjectId, filters, signal),
     enabled: !!orgId,
     staleTime: 60_000,
+    ...options,
+  })
+}
+
+/**
+ * Detail for a single node, fetched on click. Disabled until both `orgId` and
+ * `nodeId` are present, so it fires only once a node is selected.
+ */
+export function useGraphNode(
+  orgId: ObjectId | undefined,
+  nodeId: string | undefined,
+  options?: Partial<UseQueryOptions<NodeDetail>>,
+) {
+  return useQuery({
+    queryKey: queryKeys.graph.node(orgId ?? "", nodeId ?? ""),
+    queryFn: ({ signal }) =>
+      graphApi.getNode(orgId as ObjectId, nodeId as string, signal),
+    enabled: !!orgId && !!nodeId,
     ...options,
   })
 }

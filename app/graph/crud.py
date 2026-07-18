@@ -24,6 +24,7 @@ from collections import defaultdict
 from math import log2
 
 from beanie import PydanticObjectId
+from bson.errors import InvalidId
 
 from app.backboard.models import MemoryIndex
 from app.graph import ids
@@ -32,7 +33,9 @@ from app.graph.schemas import (
     GraphNode,
     GraphNodeMeta,
     GraphPayload,
+    NodeDetail,
     NodeType,
+    RelatedDecision,
 )
 from app.orgs.models import User
 
@@ -43,7 +46,15 @@ _cache: dict[_CacheKey, tuple[float, GraphPayload]] = {}
 _cache_locks: dict[_CacheKey, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 
-async def _load_decisions(query: dict) -> list[MemoryIndex]:
+def _parse_oid(raw: str) -> PydanticObjectId | None:
+    """ObjectId or None — bson raises InvalidId (not a ValueError) on bad hex."""
+    try:
+        return PydanticObjectId(raw)
+    except (InvalidId, ValueError, TypeError):
+        return None
+
+
+async def _load_decisions(query: dict[str, object]) -> list[MemoryIndex]:
     return await MemoryIndex.find(query).to_list()
 
 
@@ -57,7 +68,7 @@ async def _names_by_user_id(
     return {
         u.id: (u.name or u.githubUsername or u.email or "unknown")
         for u in users
-        if u.id
+        if u.id is not None
     }
 
 
@@ -74,7 +85,7 @@ async def build_graph(
     `types` optionally restricts which node types survive (links whose
     endpoints are dropped go with them).
     """
-    query: dict = {"orgId": org_id, "deletedAt": None}
+    query: dict[str, object] = {"orgId": org_id, "deletedAt": None}
     if repo:
         query["anchors.repo"] = repo
     if feature:
@@ -179,7 +190,8 @@ async def build_graph(
                     meta=GraphNodeMeta(decisionCount=0),
                 )
             )
-            nodes[feat_id].meta.decisionCount += 1
+            feat_meta = nodes[feat_id].meta
+            feat_meta.decisionCount = (feat_meta.decisionCount or 0) + 1
             links.append(GraphLink(source=dec_id, target=feat_id, kind="belongs_to"))
             degree[feat_id] += 1
             degree[dec_id] += 1
@@ -202,7 +214,7 @@ async def build_graph(
         if node.type == "decision":
             node.val = min(4, 1 + log2(deg + 1))
         elif node.type == "feature":
-            node.val = 2 + log2(node.meta.decisionCount + 1)
+            node.val = 2 + log2((node.meta.decisionCount or 0) + 1)
         else:
             node.val = 1 + log2(deg + 1)
 
@@ -217,6 +229,116 @@ async def build_graph(
     ]
 
     return GraphPayload(nodes=list(nodes.values()), links=links)
+
+
+async def _related_decisions(
+    decisions: list[MemoryIndex],
+) -> list[RelatedDecision]:
+    """Project decisions into hop targets, newest first, authors resolved in
+    one bulk query. Shared by every non-decision node type."""
+    names = await _names_by_user_id(
+        {d.authorUserId for d in decisions if d.authorUserId}
+    )
+    ordered = sorted(decisions, key=lambda d: d.createdAt, reverse=True)
+    return [
+        RelatedDecision(
+            id=ids.decision_id(d.id),
+            label=ids.short_label(d.contentSnapshot),
+            prNumber=d.prNumber,
+            author=names.get(d.authorUserId) if d.authorUserId else None,
+            date=d.createdAt,
+            stalenessStatus=d.stalenessStatus,
+        )
+        for d in ordered
+    ]
+
+
+async def get_node_detail(org_id: PydanticObjectId, node_id: str) -> NodeDetail | None:
+    """Full detail for a single clicked node, scoped to `org_id`.
+
+    Decision nodes return the complete snapshot + provenance; every other node
+    type returns the decisions it connects to (`relatedDecisions`) so a click
+    becomes a hop. Returns None (→ route 404) for a node that doesn't exist in
+    this org, a soft-deleted decision, or an unparseable id.
+    """
+    base: dict[str, object] = {"orgId": org_id, "deletedAt": None}
+
+    try:
+        parsed = ids.parse_node_id(node_id)
+    except ValueError:
+        return None
+
+    if parsed.type == "decision":
+        oid = _parse_oid(parsed.rest)
+        if oid is None:
+            return None
+        d = await MemoryIndex.get(oid)
+        if d is None or d.orgId != org_id or d.deletedAt is not None:
+            return None
+        names = await _names_by_user_id({d.authorUserId} if d.authorUserId else set())
+        pr_url = (
+            f"https://github.com/{d.anchors.repo}/pull/{d.prNumber}"
+            if d.anchors.repo and d.prNumber is not None
+            else None
+        )
+        return NodeDetail(
+            id=node_id,
+            type="decision",
+            label=ids.short_label(d.contentSnapshot),
+            contentSnapshot=d.contentSnapshot,
+            prNumber=d.prNumber,
+            prUrl=pr_url,
+            author=names.get(d.authorUserId) if d.authorUserId else None,
+            date=d.createdAt,
+            feature=d.feature,
+            files=d.anchors.files,
+            symbols=d.anchors.symbols,
+            stalenessStatus=d.stalenessStatus,
+            confidence=d.confidence,
+            supersededBy=(ids.decision_id(d.supersededBy) if d.supersededBy else None),
+        )
+
+    # Non-decision nodes: parse_node_id guarantees repo + rest are non-empty for
+    # file/pr/feature, and rest for engineer.
+    if parsed.type == "file":
+        path = parsed.rest
+        decisions = await _load_decisions(
+            {**base, "anchors.repo": parsed.repo, "anchors.files": path}
+        )
+        label = posixpath.basename(path) or path
+
+    elif parsed.type == "pr":
+        try:
+            pr_number = int(parsed.rest)
+        except ValueError:
+            return None
+        decisions = await _load_decisions(
+            {**base, "anchors.repo": parsed.repo, "prNumber": pr_number}
+        )
+        label = f"PR #{pr_number}"
+
+    elif parsed.type == "engineer":
+        author_id = _parse_oid(parsed.rest)
+        if author_id is None:
+            return None
+        decisions = await _load_decisions({**base, "authorUserId": author_id})
+        names = await _names_by_user_id({author_id})
+        label = names.get(author_id, "unknown")
+
+    else:  # feature — parsed.repo is the embedded org id, rest is the name
+        if parsed.repo != str(org_id):
+            return None
+        decisions = await _load_decisions({**base, "feature": parsed.rest})
+        label = parsed.rest
+
+    if not decisions:
+        return None
+    return NodeDetail(
+        id=node_id,
+        type=parsed.type,
+        label=label,
+        relatedDecisions=await _related_decisions(decisions),
+    )
 
 
 async def get_graph_cached(

@@ -39,6 +39,9 @@ export const queryKeys = {
     all: ["graph"] as const,
     detail: (orgId: ObjectId, filters?: GraphFilters) =>
       [...queryKeys.graph.all, orgId, filters ?? {}] as const,
+    /** Detail for one clicked node (`GET /orgs/{org_id}/graph/nodes/{node_id}`). */
+    node: (orgId: ObjectId, nodeId: string) =>
+      [...queryKeys.graph.all, orgId, "node", nodeId] as const,
   },
 
   documents: {
