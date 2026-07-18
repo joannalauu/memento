@@ -1,3 +1,4 @@
+from app.api_auth.routes import router as api_auth_router
 from app.hackplate import Hackplate
 from app.hackplate.lifespan import configure
 from app.lifespan import lifespan, pre_hackplate_lifespan
@@ -11,6 +12,7 @@ def register_routes(app: Hackplate) -> None:
     Args:
         app: initialized Hackplate object originating from main.py
     """
+    app.include_router(api_auth_router, prefix="/api-keys", tags=["api-keys"])
     app.include_router(orgs_router, prefix="/orgs", tags=["orgs"])
 
 

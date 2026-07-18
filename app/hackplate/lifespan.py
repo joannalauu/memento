@@ -1,7 +1,7 @@
 import logging
 import asyncio
 from contextlib import asynccontextmanager, AsyncExitStack
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Iterable
 
 from fastapi import status
 from fastapi.exceptions import HTTPException
@@ -89,7 +89,9 @@ def register_health_ping(app: Hackplate) -> None:
         return {"message": "PONG"}
 
 
-def configure(app: Hackplate, register_functions: Callable[[Hackplate], None]):
+def configure(
+    app: Hackplate, register_functions: Iterable[Callable[[Hackplate], None]]
+):
     """
     Centralizes app configuration logic
 

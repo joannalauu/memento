@@ -42,6 +42,12 @@ class AgentSession(Document):
     """
     Claude Code chat history — raw capture. Raw transcripts live HERE, never
     in Backboard. Only distilled decision records become memories.
+
+    Ingest UPSERTS on sessionId: a resumed session re-fires the hook with a
+    longer transcript, which should replace the stored transcriptRef (and reset
+    status back to "stored" + re-set expiresAt so the fuller capture is
+    re-processed). `updatedAt` records the latest re-ingest; `createdAt` is the
+    first capture.
     """
 
     orgId: PydanticObjectId
@@ -58,11 +64,15 @@ class AgentSession(Document):
         None  # set on ingest (+14d); unset when matched/distilled
     )
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updatedAt: datetime | None = (
+        None  # set on each re-ingest (upsert); None on first capture
+    )
 
     class Settings:
         name = "agentSessions"
         indexes = [
-            # hook re-fires -> E11000 -> skip
+            # unique: the upsert key — a re-fired/resumed session replaces its
+            # existing row (transcriptRef, status, expiresAt) instead of inserting a dup
             IndexModel("sessionId", name="session_id_unique", unique=True),
             # PR-time matching
             IndexModel(
