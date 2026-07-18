@@ -14,6 +14,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { ApiKeySection } from "@/features/api-keys/ApiKeySection"
+import { DocumentsSection } from "@/features/documents/DocumentsSection"
 import { InviteMemberDialog } from "./InviteMemberDialog"
 import { MembersTable } from "./MembersTable"
 
@@ -46,6 +47,8 @@ export function AdminHomePage() {
             <MembersTable orgId={orgId} />
           </CardContent>
         </Card>
+
+        <DocumentsSection />
 
         <ApiKeySection />
       </div>
