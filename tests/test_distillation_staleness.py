@@ -109,7 +109,7 @@ async def test_flags_only_non_fresh(monkeypatch):
     monkeypatch.setattr(pipeline, "staleness_check", fake_check)
 
     flags = await pipeline._staleness_flags_for_gap(
-        make_job(), make_repo(), gh=AsyncMock()
+        make_job(), make_repo(), gh=AsyncMock(), bb=AsyncMock(), org=AsyncMock()
     )
 
     assert {f.bbMemoryId for f in flags} == {"mem-gap", "mem-stale"}
@@ -123,7 +123,11 @@ async def test_staleness_checks_against_base_branch(monkeypatch):
     monkeypatch.setattr(pipeline, "staleness_check", check)
 
     await pipeline._staleness_flags_for_gap(
-        make_job(baseBranch="release"), make_repo(), gh=AsyncMock()
+        make_job(baseBranch="release"),
+        make_repo(),
+        gh=AsyncMock(),
+        bb=AsyncMock(),
+        org=AsyncMock(),
     )
 
     _, kwargs = check.call_args
@@ -136,7 +140,7 @@ async def test_diff_error_yields_no_flags(monkeypatch):
     monkeypatch.setattr(pipeline, "staleness_check", check)
 
     flags = await pipeline._staleness_flags_for_gap(
-        make_job(), make_repo(), gh=AsyncMock()
+        make_job(), make_repo(), gh=AsyncMock(), bb=AsyncMock(), org=AsyncMock()
     )
 
     assert flags == []
@@ -149,7 +153,7 @@ async def test_no_anchored_memories_yields_no_flags(monkeypatch):
     monkeypatch.setattr(pipeline, "staleness_check", check)
 
     flags = await pipeline._staleness_flags_for_gap(
-        make_job(), make_repo(), gh=AsyncMock()
+        make_job(), make_repo(), gh=AsyncMock(), bb=AsyncMock(), org=AsyncMock()
     )
 
     assert flags == []
@@ -166,7 +170,7 @@ async def test_enrichment_never_raises(monkeypatch):
 
     # a broken staleness check degrades to no flags, not a job failure
     flags = await pipeline._staleness_flags_for_gap(
-        make_job(), make_repo(), gh=AsyncMock()
+        make_job(), make_repo(), gh=AsyncMock(), bb=AsyncMock(), org=AsyncMock()
     )
 
     assert flags == []
@@ -178,9 +182,72 @@ async def test_respects_memory_cap(monkeypatch):
     check = AsyncMock(return_value=verdict("fresh"))
     monkeypatch.setattr(pipeline, "staleness_check", check)
 
-    await pipeline._staleness_flags_for_gap(make_job(), make_repo(), gh=AsyncMock())
+    await pipeline._staleness_flags_for_gap(
+        make_job(), make_repo(), gh=AsyncMock(), bb=AsyncMock(), org=AsyncMock()
+    )
 
     assert check.await_count == pipeline.STALENESS_MEMORY_CAP
+
+
+# --- by-interview gap-chat trigger -------------------------------------------
+
+
+async def test_opens_gap_chat_for_non_fresh_legacy_memory(monkeypatch):
+    legacy = make_memory("mem-legacy", source="legacy_doc", confidence="unverified")
+    monkeypatch.setattr(
+        pipeline, "_anchored_memories", AsyncMock(return_value=[legacy])
+    )
+    monkeypatch.setattr(
+        pipeline, "staleness_check", AsyncMock(return_value=verdict("gap"))
+    )
+    opened = AsyncMock()
+    monkeypatch.setattr(pipeline, "open_gap_chat", opened)
+
+    await pipeline._staleness_flags_for_gap(
+        make_job(), make_repo(), gh=AsyncMock(), bb=AsyncMock(), org=AsyncMock()
+    )
+
+    opened.assert_awaited_once()
+    _, kw = opened.call_args
+    assert kw["trigger_commit_sha"] == "abc123"  # the merged head is the baseline
+    assert kw["pr_number"] == 7
+
+
+async def test_fresh_memory_opens_no_gap_chat(monkeypatch):
+    legacy = make_memory("mem-legacy", source="legacy_doc")
+    monkeypatch.setattr(
+        pipeline, "_anchored_memories", AsyncMock(return_value=[legacy])
+    )
+    monkeypatch.setattr(
+        pipeline, "staleness_check", AsyncMock(return_value=verdict("fresh"))
+    )
+    opened = AsyncMock()
+    monkeypatch.setattr(pipeline, "open_gap_chat", opened)
+
+    await pipeline._staleness_flags_for_gap(
+        make_job(), make_repo(), gh=AsyncMock(), bb=AsyncMock(), org=AsyncMock()
+    )
+
+    opened.assert_not_called()
+
+
+async def test_gap_chat_failure_does_not_lose_flag(monkeypatch):
+    legacy = make_memory("mem-legacy", source="legacy_doc")
+    monkeypatch.setattr(
+        pipeline, "_anchored_memories", AsyncMock(return_value=[legacy])
+    )
+    monkeypatch.setattr(
+        pipeline, "staleness_check", AsyncMock(return_value=verdict("gap"))
+    )
+    monkeypatch.setattr(
+        pipeline, "open_gap_chat", AsyncMock(side_effect=RuntimeError("boom"))
+    )
+
+    flags = await pipeline._staleness_flags_for_gap(
+        make_job(), make_repo(), gh=AsyncMock(), bb=AsyncMock(), org=AsyncMock()
+    )
+
+    assert {f.bbMemoryId for f in flags} == {"mem-legacy"}
 
 
 # --- _anchored_memories query ------------------------------------------------
