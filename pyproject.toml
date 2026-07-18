@@ -24,6 +24,7 @@ dependencies = [
     "auth0-python>=5.4.0",
     "backboard-sdk>=1.5.15",
     "resend>=2.34.0",
+    "python-multipart>=0.0.26",
 ]
 
 [project.scripts]
