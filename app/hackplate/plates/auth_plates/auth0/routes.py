@@ -26,21 +26,29 @@ def auth0_router_factory(
     auth0_router = APIRouter()
 
     @auth0_router.get("/auth/login")
-    async def login():
-        params = urlencode(
-            {
-                "client_id": settings.client_id,
-                "response_type": "code",
-                "scope": "openid profile email",
-                "redirect_uri": settings.callback_url,
-                "audience": settings.audience,
-            }
+    async def login(return_to: str | None = None):
+        params = {
+            "client_id": settings.client_id,
+            "response_type": "code",
+            "scope": "openid profile email",
+            "redirect_uri": settings.callback_url,
+            "audience": settings.audience,
+        }
+        # Carry an optional post-login destination through Auth0's `state` echo so
+        # flows like accepting an org invite resume where they left off. Only a
+        # same-origin path is allowed (re-checked in the callback) so `state`
+        # can't be turned into an open redirect.
+        if return_to and return_to.startswith("/") and not return_to.startswith("//"):
+            params["state"] = return_to
+        return RedirectResponse(
+            f"https://{settings.domain}/authorize?{urlencode(params)}"
         )
-        return RedirectResponse(f"https://{settings.domain}/authorize?{params}")
 
     @auth0_router.get("/auth/callback")
     async def callback(
-        code: str, user_manager: BaseUserManager = Depends(manager_dependency)
+        code: str,
+        state: str | None = None,
+        user_manager: BaseUserManager = Depends(manager_dependency),
     ):
         try:
             tokens = await asyncio.to_thread(
@@ -88,7 +96,13 @@ def auth0_router_factory(
                             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
                         )
 
-        response = RedirectResponse(url=settings.redirect_uri)
+        # Resume a same-origin `return_to` carried through `state` (see /auth/login);
+        # anything else falls back to the configured default. Re-validated here so
+        # a hand-crafted `state` can't redirect off-origin.
+        redirect_target = settings.redirect_uri
+        if state and state.startswith("/") and not state.startswith("//"):
+            redirect_target = state
+        response = RedirectResponse(url=redirect_target)
         response.set_cookie(
             "id_token",
             tokens["id_token"],

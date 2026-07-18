@@ -1,9 +1,14 @@
+import logging
 from datetime import datetime, timezone
+from html import escape
+from urllib.parse import urlencode
 
 from beanie import PydanticObjectId
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.backboard.client import Backboard, get_backboard
+from app.config import get_app_settings
 from app.dependencies import get_current_user
 from app.github.client import GitHubApp, get_github
 from app.github.crud import create_install_state
@@ -14,6 +19,7 @@ from app.orgs.crud import (
     delete_org,
     get_org,
     get_org_invite,
+    get_org_invite_by_token,
     list_org_members,
     list_orgs_for_user,
     list_repos_for_org,
@@ -31,7 +37,60 @@ from app.orgs.schemas import (
 )
 from app.utils.emailing import send_email
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+
+def _invite_email_html(org_name: str, accept_url: str) -> str:
+    """Render the org-invite email body: a short line plus an accept button."""
+    safe_org = escape(org_name)
+    return f"""\
+<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+            max-width:480px;margin:0 auto;padding:24px;color:#0f172a;">
+  <h2 style="margin:0 0 12px;font-size:20px;">You've been invited to {safe_org}</h2>
+  <p style="margin:0 0 24px;font-size:15px;line-height:1.5;color:#334155;">
+    Click the button below to join <strong>{safe_org}</strong>. You'll be asked to
+    sign in or create an account first, then your invite is accepted automatically.
+  </p>
+  <a href="{escape(accept_url)}"
+     style="display:inline-block;background:#0f172a;color:#ffffff;text-decoration:none;
+            font-size:15px;font-weight:600;padding:12px 24px;border-radius:8px;">
+    Join {safe_org}
+  </a>
+  <p style="margin:24px 0 0;font-size:12px;line-height:1.5;color:#94a3b8;">
+    Or paste this link into your browser:<br />
+    <a href="{escape(accept_url)}" style="color:#64748b;">{escape(accept_url)}</a><br />
+    This invite expires in 3 days. If you weren't expecting it, you can ignore this email.
+  </p>
+</div>"""
+
+
+def _invite_status_page(title: str, message: str, *, app_url: str) -> HTMLResponse:
+    """A minimal standalone page for terminal invite states (expired, wrong
+    account, already used) — the browser lands here directly, so it can't lean on
+    the SPA to render feedback."""
+    return HTMLResponse(
+        f"""\
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>{escape(title)}</title></head>
+<body style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+             background:#f8fafc;color:#0f172a;display:grid;place-items:center;
+             min-height:100vh;margin:0;">
+  <main style="max-width:420px;text-align:center;padding:32px;">
+    <h1 style="font-size:20px;margin:0 0 12px;">{escape(title)}</h1>
+    <p style="font-size:15px;line-height:1.5;color:#334155;margin:0 0 24px;">{escape(message)}</p>
+    <a href="{escape(app_url)}"
+       style="display:inline-block;background:#0f172a;color:#fff;text-decoration:none;
+              font-size:15px;font-weight:600;padding:10px 20px;border-radius:8px;">
+      Go to app
+    </a>
+  </main>
+</body>
+</html>"""
+    )
 
 
 @router.post("", response_model=OrgRead, status_code=status.HTTP_201_CREATED)
@@ -167,14 +226,26 @@ async def create_org_invite_endpoint(
             detail="Only an org admin may invite members",
         )
     invite = await create_org_invite(org_id=org_id, email=payload.email)
-    # NOTE: sent after the invite is persisted and not wrapped, so a Resend
-    # failure 500s the caller even though a valid invite already exists. Make
-    # this best-effort (or add a resend/accept-link flow) before relying on it.
-    await send_email(
-        payload.email,
-        f"You've been invited to {org.name}",
-        text=f"You have been invited to {org.name}",
-    )
+    # The token is globally unique, so the accept-link needs only the token; the
+    # landing endpoint resolves the org from it and drives login-then-accept.
+    accept_url = f"{get_app_settings().api_base}/orgs/invites/{invite.token}"
+    # Best-effort: the invite is already persisted and independently redeemable
+    # via the link, so a Resend outage must not fail the request. Log and return
+    # the invite — the caller can surface/copy the link and retry the send.
+    try:
+        await send_email(
+            payload.email,
+            f"You've been invited to {org.name}",
+            html=_invite_email_html(org.name, accept_url),
+            text=(
+                f"You've been invited to join {org.name}. "
+                f"Accept your invite: {accept_url}"
+            ),
+        )
+    except Exception:  # noqa: BLE001 - deliberately swallowed, logged below
+        logger.exception(
+            "invite email send failed org=%s email=%s", org_id, payload.email
+        )
     return invite
 
 
@@ -220,6 +291,83 @@ async def accept_org_invite_endpoint(
             detail="Already a member of this org",
         )
     return await accept_org_invite(org=org, invite=invite, user_id=user.id)
+
+
+@router.get("/invites/{token}", include_in_schema=False)
+async def accept_org_invite_landing(token: str, request: Request):
+    """Browser-facing invite landing — the target of the email's accept button.
+
+    Unlike the JSON accept endpoint, the browser arrives here with no bearer
+    token, so this endpoint *optionally* authenticates: an unauthenticated
+    invitee is sent through the login flow with a ``return_to`` back here, so
+    after signing in (or registering) they land here again — now authenticated —
+    and the invite is accepted and they're bounced into the SPA. Terminal states
+    (expired, already used, wrong account) render a standalone status page since
+    there's no SPA route to show them."""
+    app_settings = get_app_settings()
+    app_url = app_settings.frontend_base
+
+    invite = await get_org_invite_by_token(token)
+    if invite is None:
+        return _invite_status_page(
+            "Invite not found",
+            "This invite link is invalid or has already been used.",
+            app_url=app_url,
+        )
+    org = await get_org(invite.orgId)
+    if org is None:
+        return _invite_status_page(
+            "Organization unavailable",
+            "The organization for this invite no longer exists.",
+            app_url=app_url,
+        )
+
+    # Optionally authenticate: fall through to login if there's no valid session.
+    try:
+        user: User = await request.app.state.config.auth.get_current_user(request)
+    except HTTPException:
+        user = None
+
+    if user is None:
+        # Bounce through login, asking to be returned to this same landing so the
+        # accept completes on the round trip. Same-origin path only (the auth
+        # plate rejects anything else) to keep this from being an open redirect.
+        login_url = f"/auth/login?{urlencode({'return_to': f'/orgs/invites/{token}'})}"
+        return RedirectResponse(url=login_url, status_code=status.HTTP_303_SEE_OTHER)
+
+    # Already in the org (or they already accepted this invite themselves) — just
+    # send them into the app rather than erroring.
+    if any(m.userId == user.id for m in org.members):
+        return RedirectResponse(url=app_url, status_code=status.HTTP_303_SEE_OTHER)
+    if invite.acceptedAt is not None:
+        return _invite_status_page(
+            "Invite already used",
+            f"This invite to {org.name} has already been accepted.",
+            app_url=app_url,
+        )
+    # TTL reaps expired invites eventually, but the sweep lags — reject a
+    # not-yet-swept expired invite explicitly.
+    if invite.expiresAt < datetime.now(timezone.utc):
+        return _invite_status_page(
+            "Invite expired",
+            f"This invite to {org.name} has expired. Ask an admin to send a new one.",
+            app_url=app_url,
+        )
+    # The invite is addressed to a specific email; a forwarded link can't be
+    # redeemed by a different account.
+    if invite.email.lower() != user.email.lower():
+        return _invite_status_page(
+            "Wrong account",
+            (
+                f"This invite was sent to {invite.email}, but you're signed in as "
+                f"{user.email}. Sign out, sign back in as {invite.email}, and open "
+                "the invite link again."
+            ),
+            app_url=app_url,
+        )
+
+    await accept_org_invite(org=org, invite=invite, user_id=user.id)
+    return RedirectResponse(url=app_url, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.patch("/{org_id}", response_model=OrgRead)

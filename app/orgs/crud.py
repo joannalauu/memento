@@ -145,6 +145,15 @@ async def get_org_invite(org_id: PydanticObjectId, token: str) -> OrgInvite | No
     return await OrgInvite.find_one(OrgInvite.orgId == org_id, OrgInvite.token == token)
 
 
+async def get_org_invite_by_token(token: str) -> OrgInvite | None:
+    """Retrieve an invite by its globally-unique token alone.
+
+    The token is unique across orgs, so the email accept-link need only carry the
+    token; the org is resolved from ``invite.orgId``. Used by the browser-facing
+    accept landing, which has only the token from the link."""
+    return await OrgInvite.find_one(OrgInvite.token == token)
+
+
 async def accept_org_invite(
     *, org: Org, invite: OrgInvite, user_id: PydanticObjectId
 ) -> Org:
