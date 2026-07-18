@@ -1,8 +1,8 @@
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 
-from beanie import Indexed
-from pydantic import Field, field_validator
+from beanie import Indexed, Document, PydanticObjectId
+from pydantic import Field, field_validator, BaseModel
 from pymongo import IndexModel
 
 from app.hackplate.plates.db_plates.mongo.registry import register_document  # noqa: F401
@@ -32,5 +32,91 @@ class User(AbstractUserDocument):
                 name="github_username_unique",
                 unique=True,
                 sparse=True,
+            ),
+        ]
+
+
+class OrgMember(BaseModel):
+    userId: PydanticObjectId
+    role: Literal["admin", "member"]
+    joinedAt: datetime
+
+
+@register_document
+class Org(Document):
+    name: str
+    slug: str
+    githubInstallationId: int | None = None
+    bbAssistantId: str
+    members: list[OrgMember] = []
+    createdAt: datetime
+
+    class Settings:
+        name = "orgs"
+        indexes = [
+            IndexModel("slug", name="slug_unique", unique=True),
+            IndexModel("bbAssistantId", name="bb_assistant_id_unique", unique=True),
+            IndexModel(
+                "githubInstallationId",
+                name="github_installation_id_unique",
+                unique=True,
+                sparse=True,
+            ),
+            IndexModel("members.userId", name="members_user_id"),  # multikey
+        ]
+
+
+@register_document
+class OrgInvite(Document):
+    orgId: PydanticObjectId
+    email: str
+    token: str
+    expiresAt: datetime
+    acceptedAt: datetime | None = None
+
+    class Settings:
+        name = "orgInvites"
+        indexes = [
+            IndexModel("token", name="token_unique", unique=True),
+            IndexModel("expiresAt", name="expires_at_ttl", expireAfterSeconds=0),
+        ]
+
+
+@register_document
+class Repo(Document):
+    orgId: PydanticObjectId
+    githubRepoId: int
+    owner: str
+    name: str
+    defaultBranch: str
+    createdAt: datetime
+
+    class Settings:
+        name = "repos"
+        indexes = [
+            IndexModel(
+                [("orgId", 1), ("githubRepoId", 1)],
+                name="org_github_repo_unique",
+                unique=True,
+            ),
+        ]
+
+
+@register_document
+class Feature(Document):
+    """Org's feature-label registry. Distillation assigns each decision a
+    feature from this set (or coins a new one). Features are the clustering
+    key that makes the knowledge graph readable."""
+
+    orgId: PydanticObjectId
+    name: str  # slug-cased
+    description: str
+    createdAt: datetime
+
+    class Settings:
+        name = "features"
+        indexes = [
+            IndexModel(
+                [("orgId", 1), ("name", 1)], name="org_name_unique", unique=True
             ),
         ]
