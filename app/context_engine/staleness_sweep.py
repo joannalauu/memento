@@ -35,6 +35,16 @@ async def _active_memories(repo_id: PydanticObjectId) -> list[MemoryIndex]:
     return await MemoryIndex.find({"repoId": repo_id, "deletedAt": None}).to_list()
 
 
+def stamp_verdict(memory: MemoryIndex, verdict: StalenessVerdict) -> None:
+    """Copy an already-computed verdict onto the memory's cached fields.
+
+    Unsaved — callers that already hold a live verdict (e.g. the coverage-gap
+    enrichment in app/distillation/pipeline.py) call this instead of
+    `refresh_staleness` so they don't pay for a second `staleness_check`."""
+    memory.stalenessStatus = verdict.status
+    memory.stalenessCheckedAt = datetime.fromisoformat(verdict.currentShaCheckedAt)
+
+
 async def refresh_staleness(
     memory: MemoryIndex,
     *,
@@ -46,8 +56,7 @@ async def refresh_staleness(
     Stamps ``stalenessStatus`` and ``stalenessCheckedAt`` (the verdict's own check
     time) and saves. Returns the verdict for callers that also want it live."""
     verdict = await staleness_check(memory, history=history, ref=ref)
-    memory.stalenessStatus = verdict.status
-    memory.stalenessCheckedAt = datetime.fromisoformat(verdict.currentShaCheckedAt)
+    stamp_verdict(memory, verdict)
     await memory.save()
     return verdict
 
@@ -67,6 +76,7 @@ async def sweep_repo_staleness(
     logged and skipped."""
     history = build_repo_history(org, repo, gh)
     refreshed = 0
+    assert repo.id is not None
     for memory in await _active_memories(repo.id):
         try:
             await refresh_staleness(memory, history=history, ref=ref)

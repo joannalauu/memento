@@ -19,6 +19,7 @@ import logging
 from datetime import datetime, timezone
 
 from pydantic import ValidationError
+from pymongo import UpdateOne
 from pymongo.asynchronous.database import AsyncDatabase
 
 from app.backboard.client import Backboard
@@ -26,7 +27,12 @@ from app.backboard.models import Anchors, MemoryIndex
 from app.claude_hook.crud import download_transcript_blob
 from app.claude_hook.models import AgentSession
 from app.claude_hook.normalizer import NormalizedEntry
-from app.context_engine import extract_anchors, find_related_context, staleness_check
+from app.context_engine import (
+    extract_anchors,
+    find_related_context,
+    stamp_verdict,
+    staleness_check,
+)
 from app.distillation import matching
 from app.distillation.distill import distill
 from app.distillation.schemas import DistillationResult, StaleMemoryFlag
@@ -140,6 +146,15 @@ async def _staleness_flags_for_gap(
     each and flag the non-fresh ones, so the coverage gap carries *what* went
     stale — never raises, staleness is enrichment, not the point of the record.
 
+    Every checked memory's verdict is also cached onto it (`stamp_verdict`),
+    fresh included — this is the one place besides the (unscheduled) sweep
+    that pays for a live GitHub check, so the graph shouldn't have to recompute
+    it later. Without this, a memory the pipeline just proved fresh — or just
+    caught going stale/gap with nothing new written to supersede it — would
+    otherwise sit on its last cached verdict indefinitely. Persisted as one
+    bulk_write, not a save() per memory — the GitHub checks above are already
+    N round trips; the cache write doesn't need to be too.
+
     For non-fresh ``legacy_doc`` memories this also opens a by-interview gap chat
     (app/gap_chat): the code moved here with nothing captured, so ask the one
     "is the old doc still accurate?" question and let the answer verify or
@@ -171,9 +186,22 @@ async def _staleness_flags_for_gap(
             default_branch=repo.defaultBranch,
         )
         flags: list[StaleMemoryFlag] = []
+        cache_updates: list[UpdateOne] = []
         # Staleness is judged against the branch the PR merged into.
         for memory in memories[:STALENESS_MEMORY_CAP]:
             verdict = await staleness_check(memory, history=history, ref=job.baseBranch)
+            stamp_verdict(memory, verdict)
+            cache_updates.append(
+                UpdateOne(
+                    {"_id": memory.id},
+                    {
+                        "$set": {
+                            "stalenessStatus": memory.stalenessStatus,
+                            "stalenessCheckedAt": memory.stalenessCheckedAt,
+                        }
+                    },
+                )
+            )
             if verdict.status == "fresh":
                 continue
             flags.append(StaleMemoryFlag(bbMemoryId=memory.bbMemoryId, verdict=verdict))
@@ -192,6 +220,10 @@ async def _staleness_flags_for_gap(
                 logger.warning(
                     "could not open gap chat for %s", memory.bbMemoryId, exc_info=True
                 )
+        if cache_updates:
+            await MemoryIndex.get_pymongo_collection().bulk_write(
+                cache_updates, ordered=False
+            )
         return flags
     except Exception:  # noqa: BLE001 - enrichment must never fail the gap record
         logger.warning(

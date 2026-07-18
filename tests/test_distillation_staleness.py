@@ -1,6 +1,7 @@
 """Tests for the coverage-gap staleness enrichment (_staleness_flags_for_gap
 and _anchored_memories) — the "make the gap visible not silent" path."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -95,6 +96,18 @@ def stub_history(monkeypatch):
     FakeToolset.diff = DIFF
 
 
+@pytest.fixture(autouse=True)
+def stub_memory_cache_write(monkeypatch):
+    # Every checked memory's verdict is cached in one bulk_write, not a save()
+    # per memory; model_construct docs have no real Mongo collection behind
+    # them, so stub get_pymongo_collection() to capture the ops instead.
+    collection = SimpleNamespace(bulk_write=AsyncMock())
+    monkeypatch.setattr(
+        MemoryIndex, "get_pymongo_collection", classmethod(lambda cls: collection)
+    )
+    return collection
+
+
 async def test_flags_only_non_fresh(monkeypatch):
     mems = [make_memory("mem-fresh"), make_memory("mem-gap"), make_memory("mem-stale")]
     monkeypatch.setattr(pipeline, "_anchored_memories", AsyncMock(return_value=mems))
@@ -113,6 +126,38 @@ async def test_flags_only_non_fresh(monkeypatch):
     )
 
     assert {f.bbMemoryId for f in flags} == {"mem-gap", "mem-stale"}
+
+
+async def test_every_checked_memory_caches_its_verdict(
+    monkeypatch, stub_memory_cache_write
+):
+    """The pipeline already pays for a live staleness_check here — the result
+    must be cached onto the memory (fresh included), not thrown away — and as
+    one bulk_write, not a save() per memory."""
+    fresh = make_memory("mem-fresh")
+    gap = make_memory("mem-gap")
+    monkeypatch.setattr(
+        pipeline, "_anchored_memories", AsyncMock(return_value=[fresh, gap])
+    )
+
+    async def fake_check(memory, **kwargs):
+        return verdict("fresh" if memory.bbMemoryId == "mem-fresh" else "gap")
+
+    monkeypatch.setattr(pipeline, "staleness_check", fake_check)
+
+    await pipeline._staleness_flags_for_gap(
+        make_job(), make_repo(), gh=AsyncMock(), bb=AsyncMock(), org=AsyncMock()
+    )
+
+    assert fresh.stalenessStatus == "fresh"
+    assert fresh.stalenessCheckedAt is not None
+    assert gap.stalenessStatus == "gap"
+    assert gap.stalenessCheckedAt is not None
+
+    stub_memory_cache_write.bulk_write.assert_awaited_once()
+    ops, kwargs = stub_memory_cache_write.bulk_write.await_args
+    assert len(ops[0]) == 2
+    assert kwargs == {"ordered": False}
 
 
 async def test_staleness_checks_against_base_branch(monkeypatch):

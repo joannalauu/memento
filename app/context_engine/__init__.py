@@ -27,7 +27,11 @@ from app.context_engine.schemas import (
     StalenessVerdict,
 )
 from app.context_engine.staleness import staleness_check
-from app.context_engine.staleness_sweep import refresh_staleness, sweep_repo_staleness
+from app.context_engine.staleness_sweep import (
+    refresh_staleness,
+    stamp_verdict,
+    sweep_repo_staleness,
+)
 
 __all__ = [
     "ConsistencyConflict",
@@ -39,6 +43,7 @@ __all__ = [
     "extract_anchors",
     "find_related_context",
     "refresh_staleness",
+    "stamp_verdict",
     "staleness_check",
     "sweep_repo_staleness",
 ]
