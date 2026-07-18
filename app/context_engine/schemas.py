@@ -52,3 +52,20 @@ class ConsistencyVerdict(BaseModel):
     conflicts: list[ConsistencyConflict] = Field(default_factory=list)
     reasoning: str = ""
     supersedes: list[int] = Field(default_factory=list)  # PRs intentionally replaced
+
+
+class StalenessVerdict(BaseModel):
+    """Has the code a memory describes moved on since the memory was written?
+
+    Three-way, not two: a changed file with a newer memory covering the same
+    anchors is not stale-and-dangerous, it is *superseded* (``stale``); a changed
+    file with nothing newer is the dangerous case (``gap``) — the code moved,
+    nobody recorded why, and this memory is now the most recent thing known.
+    """
+
+    status: Literal["fresh", "stale", "gap"]
+    memoryCommitSha: str  # baseline the check ran against ("" if the memory had none)
+    currentShaCheckedAt: str  # ISO timestamp of the check
+    changedFiles: list[str] = Field(default_factory=list)  # anchored files that moved
+    commitsSince: int | None = None  # distinct commits touching them; None if unknown
+    newerMemoryExists: bool = False  # a later memory covers the same anchors

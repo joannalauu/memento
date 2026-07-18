@@ -6,7 +6,11 @@ A pipeline of three composable stages — callers take the prefix they need:
     find_related_context(...)    async: anchors -> ranked list[RelatedMemory]
     check_consistency(...)       async: change + related -> ConsistencyVerdict
 
-Stateless: reads memoryIndex and calls Backboard, writes nothing.
+Plus a standalone freshness probe:
+
+    staleness_check(memory, ...) async: memory -> StalenessVerdict (fresh/stale/gap)
+
+Stateless: reads memoryIndex and calls Backboard/GitHub, writes nothing.
 """
 
 from app.context_engine.anchors import extract_anchors
@@ -17,14 +21,18 @@ from app.context_engine.schemas import (
     ConsistencyMode,
     ConsistencyVerdict,
     RelatedMemory,
+    StalenessVerdict,
 )
+from app.context_engine.staleness import staleness_check
 
 __all__ = [
     "ConsistencyConflict",
     "ConsistencyMode",
     "ConsistencyVerdict",
     "RelatedMemory",
+    "StalenessVerdict",
     "check_consistency",
     "extract_anchors",
     "find_related_context",
+    "staleness_check",
 ]
