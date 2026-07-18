@@ -22,6 +22,7 @@ dependencies = [
     "alembic>=1.14.0",
     "python-keycloak>=7.1.1",
     "auth0-python>=5.4.0",
+    "resend>=2.34.0",
 ]
 
 [project.scripts]
