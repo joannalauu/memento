@@ -30,6 +30,14 @@ export const apiKeysApi = {
   create: (body: ApiKeyCreate) =>
     request<ApiKeyCreated>("/api-keys", { method: "POST", body }),
 
+  /**
+   * `POST /api-keys/{key_id}/regenerate` — overwrites the key's secret in place.
+   * The old key stops authenticating immediately; the new raw secret is returned
+   * exactly once.
+   */
+  regenerate: (keyId: ObjectId) =>
+    request<ApiKeyCreated>(`/api-keys/${keyId}/regenerate`, { method: "POST" }),
+
   /** `DELETE /api-keys/{key_id}` — revokes immediately. */
   remove: (keyId: ObjectId) =>
     request<void>(`/api-keys/${keyId}`, { method: "DELETE" }),
@@ -65,6 +73,21 @@ export function useCreateApiKey(
     onSuccess: (data, vars, ...rest) => {
       qc.invalidateQueries({ queryKey: queryKeys.apiKeys.lists() })
       options?.onSuccess?.(data, vars, ...rest)
+    },
+  })
+}
+
+export function useRegenerateApiKey(
+  options?: UseMutationOptions<ApiKeyCreated, Error, ObjectId>,
+) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (keyId: ObjectId) => apiKeysApi.regenerate(keyId),
+    ...options,
+    onSuccess: (data, keyId, ...rest) => {
+      qc.invalidateQueries({ queryKey: queryKeys.apiKeys.lists() })
+      qc.invalidateQueries({ queryKey: queryKeys.apiKeys.detail(keyId) })
+      options?.onSuccess?.(data, keyId, ...rest)
     },
   })
 }

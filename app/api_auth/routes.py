@@ -79,12 +79,39 @@ async def create_api_key(
     elif len(orgs) == 1:
         org_id = orgs[0].id
         assert org_id is not None
+    else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="multiple orgs; specify orgId",
         )
 
     doc, raw_key = await crud.create_api_key(user.id, org_id, body.label)
+    assert doc.id is not None
+    return ApiKeyCreated(
+        id=doc.id,
+        label=doc.label,
+        orgId=doc.orgId,
+        key=raw_key,
+        createdAt=doc.createdAt,
+    )
+
+
+@router.post("/{key_id}/regenerate", response_model=ApiKeyCreated)
+async def regenerate_api_key(
+    key_id: PydanticObjectId,
+    user=Depends(get_current_user),
+) -> ApiKeyCreated:
+    """Regenerate an API key owned by the authenticated user, overwriting its
+    secret in place. The previous key stops authenticating immediately; the new
+    raw key is returned exactly once (`key`) and never retrievable again. Returns
+    404 if the key doesn't exist or belongs to another user."""
+    result = await crud.regenerate_api_key(user.id, key_id)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="api key not found",
+        )
+    doc, raw_key = result
     assert doc.id is not None
     return ApiKeyCreated(
         id=doc.id,

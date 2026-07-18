@@ -69,6 +69,22 @@ async def delete_user_api_key(
     return True
 
 
+async def regenerate_api_key(
+    user_id: PydanticObjectId, key_id: PydanticObjectId
+) -> tuple[ApiKey, str] | None:
+    """Mint a new secret for an existing key in place, scoped to its owner. The
+    old raw key stops authenticating immediately (its hash is overwritten).
+    Returns the doc plus the new raw key — the caller's only chance to capture
+    the secret — or None if the key isn't found or isn't owned."""
+    key = await ApiKey.find_one(ApiKey.id == key_id, ApiKey.userId == user_id)
+    if key is None:
+        return None
+    raw_key = generate_api_key()
+    key.keyHash = hash_api_key(raw_key)
+    await key.save()
+    return key, raw_key
+
+
 async def create_api_key(
     user_id: PydanticObjectId, org_id: PydanticObjectId, label: str
 ) -> tuple[ApiKey, str]:
