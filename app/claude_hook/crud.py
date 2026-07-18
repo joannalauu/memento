@@ -11,7 +11,9 @@ from gridfs.asynchronous import AsyncGridFSBucket
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import DuplicateKeyError
 
-from app.claude_hook.models import AgentSession
+from typing import Literal
+
+from app.claude_hook.models import AgentSession, WebhookEvent
 from app.orgs.models import Repo
 
 logger = logging.getLogger(__name__)
@@ -202,6 +204,40 @@ async def upsert_agent_session(
 
     # Two consecutive races is effectively unreachable; surface rather than loop.
     raise RuntimeError("agent-session upsert contention")
+
+
+async def claim_webhook_event(
+    delivery_id: str, event_type: str, payload: dict
+) -> WebhookEvent | None:
+    """Insert-first claim on the unique deliveryId index. Returns the event to
+    process, or None when the delivery already reached a terminal status
+    (processed/skipped) — a true duplicate. A "received" (crash mid-processing)
+    or "failed" event is handed back for reprocessing: GitHub only retries on
+    non-2xx/timeout, so treating those as re-claimable is what makes a crash
+    between claim and enqueue lossless."""
+    doc = WebhookEvent(
+        deliveryId=delivery_id,
+        eventType=event_type,
+        payload=payload,
+        status="received",
+    )
+    try:
+        await doc.insert()
+        return doc
+    except DuplicateKeyError:
+        existing = await WebhookEvent.find_one({"deliveryId": delivery_id})
+        if existing is None or existing.status in ("processed", "skipped"):
+            return None
+        return existing
+
+
+async def finish_webhook_event(
+    event: WebhookEvent, status: Literal["processed", "failed", "skipped"]
+) -> None:
+    """Move a claimed webhook event to its outcome status."""
+    event.status = status
+    event.processedAt = datetime.now(timezone.utc)
+    await event.save()
 
 
 async def enqueue_normalization(db: AsyncDatabase, agent_session_id: str) -> None:

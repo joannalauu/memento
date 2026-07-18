@@ -73,6 +73,16 @@ async def get_org_by_installation(installation_id: int) -> Org | None:
     return await Org.find_one(Org.githubInstallationId == installation_id)
 
 
+async def get_repo_by_github_id(
+    org_id: PydanticObjectId, github_repo_id: int
+) -> Repo | None:
+    """Resolve an org's repo by its GitHub repo id (served by the unique
+    org_github_repo compound index)."""
+    return await Repo.find_one(
+        Repo.orgId == org_id, Repo.githubRepoId == github_repo_id
+    )
+
+
 async def sync_repos_for_org(org_id: PydanticObjectId, repos: list[dict]) -> int:
     """Upsert GitHub repos (as returned by the REST API) into an org's Repo
     collection, keyed by githubRepoId. Connecting or re-seeing a repo marks it
@@ -83,9 +93,7 @@ async def sync_repos_for_org(org_id: PydanticObjectId, repos: list[dict]) -> int
         owner = repo["owner"]["login"]
         name = repo["name"]
         default_branch = repo.get("default_branch") or "main"
-        existing = await Repo.find_one(
-            Repo.orgId == org_id, Repo.githubRepoId == github_repo_id
-        )
+        existing = await get_repo_by_github_id(org_id, github_repo_id)
         if existing is None:
             await Repo(
                 orgId=org_id,
@@ -112,9 +120,7 @@ async def deactivate_repos_by_github_ids(
     installation). Records are kept, not deleted. Returns the number affected."""
     deactivated = 0
     for github_repo_id in github_repo_ids:
-        repo = await Repo.find_one(
-            Repo.orgId == org_id, Repo.githubRepoId == github_repo_id
-        )
+        repo = await get_repo_by_github_id(org_id, github_repo_id)
         if repo is not None and repo.active:
             repo.active = False
             await repo.save()

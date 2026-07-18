@@ -5,3 +5,4 @@ import app.file_upload.models  # noqa: F401
 import app.claude_hook.models  # noqa: F401
 import app.backboard.models  # noqa: F401
 import app.github.models  # noqa: F401
+import app.job_queue.models  # noqa: F401
