@@ -28,6 +28,33 @@ async def list_user_orgs(user_id: PydanticObjectId) -> list[Org]:
     return await Org.find({"members.userId": user_id}).to_list()
 
 
+async def list_user_api_keys(user_id: PydanticObjectId) -> list[ApiKey]:
+    """All API keys owned by the user, newest first. Never exposes the raw key
+    (which isn't stored) — callers must project away `keyHash` when serializing."""
+    return await ApiKey.find(ApiKey.userId == user_id).sort(-ApiKey.createdAt).to_list()
+
+
+async def get_user_api_key(
+    user_id: PydanticObjectId, key_id: PydanticObjectId
+) -> ApiKey | None:
+    """A single API key by id, scoped to its owner so users can't read keys
+    belonging to another user. Returns None if not found or not owned."""
+    return await ApiKey.find_one(ApiKey.id == key_id, ApiKey.userId == user_id)
+
+
+async def delete_user_api_key(
+    user_id: PydanticObjectId, key_id: PydanticObjectId
+) -> bool:
+    """Revoke (hard-delete) a single API key, scoped to its owner so users can't
+    delete keys belonging to another user. Returns True if a key was deleted,
+    False if none matched (not found or not owned)."""
+    key = await ApiKey.find_one(ApiKey.id == key_id, ApiKey.userId == user_id)
+    if key is None:
+        return False
+    await key.delete()
+    return True
+
+
 async def create_api_key(
     user_id: PydanticObjectId, org_id: PydanticObjectId, label: str
 ) -> tuple[ApiKey, str]:

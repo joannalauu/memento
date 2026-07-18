@@ -18,3 +18,14 @@ class ApiKeyCreated(BaseModel):
     orgId: PydanticObjectId
     key: str
     createdAt: datetime
+
+
+class ApiKeyRead(BaseModel):
+    """Response for reading a key. The secret is never included — only its hash
+    is stored server-side, and even that is withheld here."""
+
+    id: PydanticObjectId
+    label: str
+    orgId: PydanticObjectId
+    lastUsedAt: datetime | None = None
+    createdAt: datetime

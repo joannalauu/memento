@@ -1,10 +1,54 @@
+from beanie import PydanticObjectId
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api_auth import crud
-from app.api_auth.schemas import ApiKeyCreate, ApiKeyCreated
+from app.api_auth.schemas import ApiKeyCreate, ApiKeyCreated, ApiKeyRead
 from app.dependencies import get_current_user
 
 router = APIRouter()
+
+
+@router.get("", response_model=list[ApiKeyRead])
+async def list_api_keys(
+    user=Depends(get_current_user),
+) -> list[ApiKeyRead]:
+    """List the authenticated user's API keys. The secret is never returned —
+    only metadata (label, org, timestamps)."""
+    keys = await crud.list_user_api_keys(user.id)
+    return [ApiKeyRead.model_validate(key, from_attributes=True) for key in keys]
+
+
+@router.get("/{key_id}", response_model=ApiKeyRead)
+async def get_api_key(
+    key_id: PydanticObjectId,
+    user=Depends(get_current_user),
+) -> ApiKeyRead:
+    """Fetch a single API key owned by the authenticated user. The secret is
+    never returned. Returns 404 if the key doesn't exist or belongs to another
+    user."""
+    key = await crud.get_user_api_key(user.id, key_id)
+    if key is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="api key not found",
+        )
+    return ApiKeyRead.model_validate(key, from_attributes=True)
+
+
+@router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_api_key(
+    key_id: PydanticObjectId,
+    user=Depends(get_current_user),
+) -> None:
+    """Revoke an API key owned by the authenticated user. Deletion is immediate
+    and permanent — the key stops authenticating on the next request. Returns 404
+    if the key doesn't exist or belongs to another user."""
+    deleted = await crud.delete_user_api_key(user.id, key_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="api key not found",
+        )
 
 
 @router.post("", response_model=ApiKeyCreated, status_code=status.HTTP_201_CREATED)
