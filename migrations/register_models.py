@@ -4,4 +4,3 @@ import app.mcp.models  # noqa: F401
 import app.file_upload.models  # noqa: F401
 import app.claude_hook.models  # noqa: F401
 import app.backboard.models  # noqa: F401
-import app.graph.models  # noqa: F401

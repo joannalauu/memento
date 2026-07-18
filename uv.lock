@@ -262,6 +262,19 @@ wheels = [
 ]
 
 [[package]]
+name = "backboard-sdk"
+version = "1.5.15"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b7/4e/e89daeafe4be3bc29817504d80bdfd36c7127a383f7c490346a0a6fee4d5/backboard_sdk-1.5.15.tar.gz", hash = "sha256:5ec4c122bb1b102fd1d4951126f8b9d1b10a83d372dfaf4ea84d2024ad3e01ef", size = 35376, upload-time = "2026-05-20T19:16:41.399Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/50/4e/070627eecbfbea588dd8ae54e1263942355e06a9e527b442af162b9f49a0/backboard_sdk-1.5.15-py3-none-any.whl", hash = "sha256:711bf8798f4dd11663710612437cf3e5bc12c25057b0bc2e16e0f0d9f7ed07e0", size = 22392, upload-time = "2026-05-20T19:16:39.875Z" },
+]
+
+[[package]]
 name = "bcrypt"
 version = "5.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -587,6 +600,7 @@ dependencies = [
     { name = "alembic" },
     { name = "asyncpg" },
     { name = "auth0-python" },
+    { name = "backboard-sdk" },
     { name = "beanie" },
     { name = "fastapi" },
     { name = "fastapi-users" },
@@ -609,6 +623,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.14.0" },
     { name = "asyncpg", specifier = ">=0.31.0" },
     { name = "auth0-python", specifier = ">=5.4.0" },
+    { name = "backboard-sdk", specifier = ">=1.5.15" },
     { name = "beanie", specifier = ">=2.0.0" },
     { name = "fastapi", specifier = ">=0.135.2" },
     { name = "fastapi-users", specifier = ">=15.0.5" },

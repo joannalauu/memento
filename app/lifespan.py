@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
 
+from app.backboard.client import Backboard
 from app.hackplate import Hackplate
 
 
@@ -23,4 +24,8 @@ async def lifespan(app: Hackplate) -> AsyncGenerator[None, None]:
     Args:
         app: initialized Hackplate object originating from main.py
     """
-    yield
+    app.state.backboard = Backboard()
+    try:
+        yield
+    finally:
+        await app.state.backboard.aclose()

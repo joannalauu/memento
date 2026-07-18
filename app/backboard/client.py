@@ -1,0 +1,390 @@
+"""
+Async wrapper around the official Backboard SDK (`backboard-sdk`).
+
+One module over assistants, threads/messages (streaming + non-streaming),
+memories, and documents. Memento runs a single org-level Backboard assistant,
+so every memory write MUST be repo-scoped: `add_memory`/`update_memory` always
+inject the repo into both the content text and the metadata, and mirror the
+authored content into the local `memoryIndex` collection (see models.py) in
+the same call.
+"""
+
+import uuid
+from collections.abc import AsyncIterator
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from backboard import BackboardClient
+from backboard.models import (
+    Assistant,
+    AssistantCloneResponse,
+    ChatMessagesResponse,
+    Memory,
+    MemoriesListResponse,
+    MemoryOperationStatus,
+    MemoryStats,
+    Thread,
+    ToolDefinition,
+    ToolOutput,
+)
+from backboard.models import Document as BackboardDocument
+from beanie import PydanticObjectId
+from fastapi import Request
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.backboard.models import Anchors, MemoryConfidence, MemoryIndex, MemorySource
+
+Uuid = str | uuid.UUID
+
+
+class BackboardSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="BACKBOARD_",
+        extra="ignore",
+        env_ignore_empty=True,
+    )
+
+    api_key: str
+    base_url: str = "https://app.backboard.io/api"
+    timeout: int = 30
+
+
+def _inject_repo(repo: str, content: str) -> str:
+    """Prefix-tag content with the repo so the org-level assistant's semantic
+    search and fact extraction always see the repo scope."""
+    return f"[repo: {repo}] {content}"
+
+
+def _repo_metadata(repo: str, metadata: dict[str, Any] | None) -> dict[str, Any]:
+    """Merge caller metadata with the repo key. Repo always wins."""
+    return {**(metadata or {}), "repo": repo}
+
+
+class Backboard:
+    """Thin typed facade over ``BackboardClient`` plus Memento's repo-scoped
+    memory-write helpers. Use as a long-lived singleton (see app/lifespan.py)
+    or as an async context manager in scripts."""
+
+    def __init__(self, settings: BackboardSettings | None = None) -> None:
+        self.settings = settings or BackboardSettings()
+        self._client = BackboardClient(
+            api_key=self.settings.api_key,
+            base_url=self.settings.base_url,
+            timeout=self.settings.timeout,
+        )
+
+    @property
+    def sdk(self) -> BackboardClient:
+        """Escape hatch to the underlying SDK client."""
+        return self._client
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+    async def __aenter__(self) -> "Backboard":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.aclose()
+
+    # ─── Assistants ───────────────────────────────────────────────────────────
+
+    async def create_assistant(
+        self,
+        name: str,
+        description: str | None = None,
+        system_prompt: str | None = None,
+        tools: list[ToolDefinition | dict[str, Any]] | None = None,
+        custom_fact_extraction_prompt: str | None = None,
+        custom_update_memory_prompt: str | None = None,
+        **extra: Any,
+    ) -> Assistant:
+        return await self._client.create_assistant(
+            name,
+            description=description,
+            system_prompt=system_prompt,
+            tools=tools,
+            custom_fact_extraction_prompt=custom_fact_extraction_prompt,
+            custom_update_memory_prompt=custom_update_memory_prompt,
+            **extra,
+        )
+
+    async def list_assistants(self, skip: int = 0, limit: int = 100) -> list[Assistant]:
+        return await self._client.list_assistants(skip=skip, limit=limit)
+
+    async def get_assistant(self, assistant_id: Uuid) -> Assistant:
+        return await self._client.get_assistant(assistant_id)
+
+    async def update_assistant(self, assistant_id: Uuid, **fields: Any) -> Assistant:
+        return await self._client.update_assistant(assistant_id, **fields)
+
+    async def delete_assistant(self, assistant_id: Uuid) -> dict[str, Any]:
+        return await self._client.delete_assistant(assistant_id)
+
+    async def clone_assistant(self, assistant_id: Uuid, **options: Any) -> AssistantCloneResponse:
+        return await self._client.clone_assistant(assistant_id, **options)
+
+    # ─── Threads ──────────────────────────────────────────────────────────────
+
+    async def create_thread(self, assistant_id: Uuid) -> Thread:
+        return await self._client.create_thread(assistant_id)
+
+    async def list_threads(
+        self,
+        assistant_id: Uuid | None = None,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> list[Thread]:
+        if assistant_id is not None:
+            return await self._client.list_threads_for_assistant(assistant_id, skip=skip, limit=limit)
+        return await self._client.list_threads(skip=skip, limit=limit)
+
+    async def get_thread(self, thread_id: Uuid) -> Thread:
+        """Thread with full message history."""
+        return await self._client.get_thread(thread_id)
+
+    async def delete_thread(self, thread_id: Uuid) -> dict[str, Any]:
+        return await self._client.delete_thread(thread_id)
+
+    # ─── Messages ─────────────────────────────────────────────────────────────
+
+    async def send_message(
+        self,
+        content: str,
+        *,
+        thread_id: Uuid | None = None,
+        assistant_id: Uuid | None = None,
+        system_prompt: str | None = None,
+        llm_provider: str | None = None,
+        model_name: str | None = None,
+        memory: str | None = None,
+        memory_pro: str | None = None,
+        memory_response_citation: bool | None = None,
+        web_search: str | None = None,
+        json_output: bool | None = None,
+        tools: list[ToolDefinition | dict[str, Any]] | None = None,
+        thinking: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        **extra: Any,
+    ) -> ChatMessagesResponse:
+        """Non-streaming send. Omit thread_id to auto-create a thread pinned
+        to assistant_id; the response carries both ids for continuation."""
+        return await self._client.send_message(
+            content,
+            thread_id=thread_id,
+            assistant_id=assistant_id,
+            system_prompt=system_prompt,
+            llm_provider=llm_provider,
+            model_name=model_name,
+            stream=False,
+            memory=memory,
+            memory_pro=memory_pro,
+            memory_response_citation=memory_response_citation,
+            web_search=web_search,
+            json_output=json_output,
+            tools=tools,
+            thinking=thinking,
+            metadata=metadata,
+            **extra,
+        )
+
+    async def stream_message(
+        self,
+        content: str,
+        *,
+        thread_id: Uuid | None = None,
+        assistant_id: Uuid | None = None,
+        system_prompt: str | None = None,
+        llm_provider: str | None = None,
+        model_name: str | None = None,
+        memory: str | None = None,
+        memory_pro: str | None = None,
+        memory_response_citation: bool | None = None,
+        web_search: str | None = None,
+        json_output: bool | None = None,
+        tools: list[ToolDefinition | dict[str, Any]] | None = None,
+        thinking: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        **extra: Any,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Streaming send. Yields SSE event dicts (``type`` is one of
+        ``content_streaming``, ``reasoning_streaming``, ``reasoning_ended``,
+        ``tool_submit_required``, ``run_ended``)."""
+        events = await self._client.send_message(
+            content,
+            thread_id=thread_id,
+            assistant_id=assistant_id,
+            system_prompt=system_prompt,
+            llm_provider=llm_provider,
+            model_name=model_name,
+            stream=True,
+            memory=memory,
+            memory_pro=memory_pro,
+            memory_response_citation=memory_response_citation,
+            web_search=web_search,
+            json_output=json_output,
+            tools=tools,
+            thinking=thinking,
+            metadata=metadata,
+            **extra,
+        )
+        async for event in events:
+            yield event
+
+    async def submit_tool_outputs(
+        self,
+        thread_id: Uuid,
+        tool_outputs: list[ToolOutput | dict[str, str]],
+    ) -> ChatMessagesResponse:
+        return await self._client.submit_tool_outputs_simple(thread_id, tool_outputs, stream=False)
+
+    async def stream_tool_outputs(
+        self,
+        thread_id: Uuid,
+        tool_outputs: list[ToolOutput | dict[str, str]],
+    ) -> AsyncIterator[dict[str, Any]]:
+        events = await self._client.submit_tool_outputs_simple(thread_id, tool_outputs, stream=True)
+        async for event in events:
+            yield event
+
+    async def cancel_run(self, thread_id: Uuid, run_id: str) -> dict[str, Any]:
+        return await self._client.cancel_run(thread_id, run_id)
+
+    # ─── Memories ─────────────────────────────────────────────────────────────
+
+    async def add_memory(
+        self,
+        *,
+        assistant_id: Uuid,
+        org_id: PydanticObjectId,
+        repo_id: PydanticObjectId,
+        repo: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+        source: MemorySource = "manual",
+        confidence: MemoryConfidence = "unverified",
+        feature: str | None = None,
+        pr_number: int | None = None,
+        commit_sha: str | None = None,
+        author_user_id: PydanticObjectId | None = None,
+        files: list[str] | None = None,
+        symbols: list[str] | None = None,
+    ) -> MemoryIndex:
+        """Write a repo-scoped memory to Backboard AND mirror it into the local
+        ``memoryIndex`` collection in the same call.
+
+        The repo is always injected into the content (``[repo: ...]`` prefix)
+        and the metadata (``{"repo": ...}``) — callers cannot opt out, because
+        the org-level assistant pools memories from every repo.
+        """
+        injected = _inject_repo(repo, content)
+        result = await self._client.add_memory(
+            assistant_id, injected, _repo_metadata(repo, metadata)
+        )
+        memory_id = result.get("memory_id")
+        if not memory_id:
+            raise RuntimeError(f"Backboard add_memory returned no memory_id: {result}")
+        index = MemoryIndex(
+            orgId=org_id,
+            repoId=repo_id,
+            bbMemoryId=str(memory_id),
+            contentSnapshot=injected,
+            source=source,
+            confidence=confidence,
+            feature=feature,
+            prNumber=pr_number,
+            commitSha=commit_sha,
+            authorUserId=author_user_id,
+            anchors=Anchors(repo=repo, files=files or [], symbols=symbols or []),
+        )
+        await index.insert()
+        return index
+
+    async def update_memory(
+        self,
+        *,
+        assistant_id: Uuid,
+        memory_id: str,
+        repo: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> Memory:
+        """Update a memory on Backboard (repo re-injected, same rules as
+        ``add_memory``) and refresh the local index's contentSnapshot."""
+        injected = _inject_repo(repo, content)
+        memory = await self._client.update_memory(
+            assistant_id, memory_id, injected, _repo_metadata(repo, metadata)
+        )
+        index = await MemoryIndex.find_one({"bbMemoryId": str(memory_id)})
+        if index is not None:
+            index.contentSnapshot = injected
+            await index.save()
+        return memory
+
+    async def delete_memory(self, assistant_id: Uuid, memory_id: str) -> dict[str, Any]:
+        """Delete a memory on Backboard and soft-delete its index doc."""
+        result = await self._client.delete_memory(assistant_id, memory_id)
+        index = await MemoryIndex.find_one({"bbMemoryId": str(memory_id)})
+        if index is not None:
+            index.deletedAt = datetime.now(timezone.utc)
+            await index.save()
+        return result
+
+    async def search_memories(self, assistant_id: Uuid, query: str, limit: int = 5) -> dict[str, Any]:
+        """Semantic search. Returns ``{"memories": [...], "total_count": n}``."""
+        return await self._client.search_memories(assistant_id, query, limit=limit)
+
+    async def list_memories(
+        self,
+        assistant_id: Uuid,
+        page: int | None = None,
+        page_size: int | None = None,
+    ) -> MemoriesListResponse:
+        return await self._client.get_memories(assistant_id, page=page, page_size=page_size)
+
+    async def get_memory(self, assistant_id: Uuid, memory_id: str) -> Memory:
+        return await self._client.get_memory(assistant_id, memory_id)
+
+    async def reset_memories(self, assistant_id: Uuid) -> dict[str, Any]:
+        return await self._client.reset_memories(assistant_id)
+
+    async def get_memory_stats(self, assistant_id: Uuid) -> MemoryStats:
+        return await self._client.get_memory_stats(assistant_id)
+
+    async def get_memory_operation_status(self, operation_id: str) -> MemoryOperationStatus:
+        """Status of an async memory op (e.g. triggered by memory="Auto" chat
+        turns, surfaced as ``memory_operation_id`` on message responses)."""
+        return await self._client.get_memory_operation_status(operation_id)
+
+    # ─── Documents ────────────────────────────────────────────────────────────
+
+    async def upload_document_to_assistant(
+        self, assistant_id: Uuid, file_path: str | Path
+    ) -> BackboardDocument:
+        return await self._client.upload_document_to_assistant(assistant_id, file_path)
+
+    async def upload_document_to_thread(
+        self, thread_id: Uuid, file_path: str | Path
+    ) -> BackboardDocument:
+        return await self._client.upload_document_to_thread(thread_id, file_path)
+
+    async def list_assistant_documents(self, assistant_id: Uuid) -> list[BackboardDocument]:
+        return await self._client.list_assistant_documents(assistant_id)
+
+    async def list_thread_documents(self, thread_id: Uuid) -> list[BackboardDocument]:
+        return await self._client.list_thread_documents(thread_id)
+
+    async def get_document_status(self, document_id: Uuid) -> BackboardDocument:
+        """Poll until ``status`` reaches ``indexed`` (or ``error``)."""
+        return await self._client.get_document_status(document_id)
+
+    async def delete_document(self, document_id: Uuid) -> dict[str, Any]:
+        return await self._client.delete_document(document_id)
+
+
+def get_backboard(request: Request) -> Backboard:
+    """FastAPI dependency returning the app-wide Backboard client
+    (initialized in app/lifespan.py)."""
+    return request.app.state.backboard

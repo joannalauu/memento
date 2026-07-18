@@ -5,7 +5,7 @@ from beanie import Document, PydanticObjectId
 from pydantic import BaseModel
 from pymongo import IndexModel
 
-from app.graph.models import Anchors
+from app.backboard.models import Anchors
 from app.hackplate.plates.db_plates.mongo.registry import register_document  # noqa: F401
 
 
