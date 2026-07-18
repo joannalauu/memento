@@ -1,0 +1,83 @@
+{
+    "permissions": {
+        "allow": [
+            "Bash(uv run *)",
+            "Bash(uv add *)",
+            "Bash(hackplate *)",
+            "Bash(git status *)",
+            "Bash(git log *)",
+            "Bash(git diff *)",
+            "Bash(docker compose *)",
+            "Bash(docker ps *)",
+            "Bash(uv run pytest *)",
+            "Bash(uv run alembic *)",
+            "Bash(pre-commit *)",
+            "Bash(find . *)",
+            "Bash(grep * *)",
+            "Read(./.env.*)"
+        ],
+        "ask": [
+            "Bash(git add *)",
+            "Bash(git commit *)",
+            "Bash(git push *)"
+        ],
+        "deny": [
+            "Read(./.env)"
+        ]
+    },
+    "hooks": {
+        "PostToolUse": [
+            {
+                "matcher": "Edit|Write",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "cd \"$CLAUDE_PROJECT_DIR\" && hackplate precommit"
+                    }
+                ]
+            }
+        ],
+        "Stop": [
+            {
+                "matcher": ".*",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "echo 'Checklist: hackplate run  •  pytest (if pytests exist)  •  hackplate precommit'"
+                    }
+                ]
+            }
+        ],
+        "UserPromptSubmit": [
+            {
+                "matcher": ".*",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "echo \"$(cat modes/CLAUDE.mode.md) in use.\""
+                    }
+                ]
+            }
+        ]
+    },
+    "includeGitInstructions": false,
+    "env": {
+        "ENVIRONMENT": "DEVELOPMENT",
+        "PYTHONPATH": "."
+    },
+    "companyAnnouncements": [
+        "Read CLAUDE.md and AGENTS.md before making changes."
+    ],
+    "spinnerTipsOverride": {
+        "tips": [
+            "Use `hackplate setplate db <sqlite|postgres|mongo>` to swap databases",
+            "Use `hackplate setplate auth <local|auth0|keycloak>` to swap auth",
+            "Add features in vertical slices under app/ via `hackplate startfeature <feature_name>`",
+            "Remove app/ features with `hackplate dropfeature <feature_name>`"
+        ]
+    },
+    "attribution": {
+        "commit": "🤖 Generated with Claude Code\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
+        "pr": ""
+    }
+}

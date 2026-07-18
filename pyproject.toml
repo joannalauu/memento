@@ -1,0 +1,53 @@
+[project]
+name = "fastapi-hackplate"
+version = "0.1.0"
+description = "A FastAPI hackathon template for rapid development and deployment"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "aiosqlite>=0.22.1",
+    "fastapi>=0.135.2",
+    "httpx>=0.28.1",
+    "typer>=0.15.0",
+    "pydantic-settings>=2.13.1",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+    "greenlet>=3.0.0",
+    "sqlalchemy>=2.0.49",
+    "sqlmodel>=0.0.38",
+    "uvicorn>=0.43.0",
+    "asyncpg>=0.31.0",
+    "beanie>=2.0.0",
+    "fastapi-users>=15.0.5",
+    "alembic>=1.14.0",
+    "python-keycloak>=7.1.1",
+    "auth0-python>=5.4.0",
+]
+
+[project.scripts]
+hackplate = "app.hackplate.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.hackplate]
+# The user model used by the auth plate. Must inherit from AbstractUser (SQL plates)
+# or AbstractUserDocument (mongo plate). Change this if you define a custom user model.
+auth_user_model = "app.hackplate.user.models.UserDocument"
+
+[tool.hackplate.db]
+# Set to true to manage schema with Alembic migrations.
+# When false, SQLModel creates tables automatically on startup (not recommended for production).
+alembic = false
+
+[tool.hackplate.auth]
