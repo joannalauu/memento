@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from beanie import Document, PydanticObjectId
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pymongo import IndexModel
 
 from app.backboard.models import Anchors
@@ -57,7 +57,7 @@ class AgentSession(Document):
     expiresAt: datetime | None = (
         None  # set on ingest (+14d); unset when matched/distilled
     )
-    createdAt: datetime
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Settings:
         name = "agentSessions"
@@ -97,7 +97,7 @@ class ContextRequest(Document):
     status: Literal["pending", "completed", "archived", "expired", "skipped"]
     emailedAt: datetime | None = None
     completedAt: datetime | None = None
-    createdAt: datetime
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Settings:
         name = "contextRequests"
@@ -119,7 +119,7 @@ class WebhookEvent(Document):
     payload: dict
     status: Literal["received", "processed", "failed", "skipped"]
     processedAt: datetime | None = None
-    createdAt: datetime
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Settings:
         name = "webhookEvents"

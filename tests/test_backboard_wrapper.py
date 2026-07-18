@@ -145,7 +145,9 @@ async def test_stream_message_yields_sse_events(bb):
 
     bb._client.send_message.return_value = events()
 
-    chunks = [event async for event in bb.stream_message("hello", assistant_id="assistant-1")]
+    chunks = [
+        event async for event in bb.stream_message("hello", assistant_id="assistant-1")
+    ]
 
     assert [c["type"] for c in chunks] == ["content_streaming", "run_ended"]
     assert bb._client.send_message.await_args.kwargs["stream"] is True
@@ -156,4 +158,6 @@ async def test_list_threads_dispatches_on_assistant_id(bb):
     bb._client.list_threads.assert_awaited_once_with(skip=0, limit=100)
 
     await bb.list_threads(assistant_id="assistant-1", limit=10)
-    bb._client.list_threads_for_assistant.assert_awaited_once_with("assistant-1", skip=0, limit=10)
+    bb._client.list_threads_for_assistant.assert_awaited_once_with(
+        "assistant-1", skip=0, limit=10
+    )

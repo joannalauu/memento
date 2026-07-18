@@ -49,7 +49,7 @@ class Org(Document):
     githubInstallationId: int | None = None
     bbAssistantId: str
     members: list[OrgMember] = []
-    createdAt: datetime
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Settings:
         name = "orgs"
@@ -89,7 +89,7 @@ class Repo(Document):
     owner: str
     name: str
     defaultBranch: str
-    createdAt: datetime
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Settings:
         name = "repos"
@@ -111,7 +111,7 @@ class Feature(Document):
     orgId: PydanticObjectId
     name: str  # slug-cased
     description: str
-    createdAt: datetime
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Settings:
         name = "features"

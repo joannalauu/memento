@@ -1,6 +1,7 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from beanie import Document, PydanticObjectId
+from pydantic import Field
 from pymongo import IndexModel
 
 from app.hackplate.plates.db_plates.mongo.registry import register_document  # noqa: F401
@@ -15,7 +16,7 @@ class ApiKey(Document):
     keyHash: str
     label: str
     lastUsedAt: datetime | None = None
-    createdAt: datetime
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Settings:
         name = "apiKeys"

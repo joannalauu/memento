@@ -1,7 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from beanie import Document, PydanticObjectId
+from pydantic import Field
 from pymongo import IndexModel
 
 from app.hackplate.plates.db_plates.mongo.registry import register_document  # noqa: F401
@@ -17,7 +18,7 @@ class DocumentIndexEntry(Document):
     filename: str
     kind: Literal["upload", "decision_digest"]
     status: Literal["pending", "processing", "indexed", "error"]
-    createdAt: datetime
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Settings:
         name = "documentIndex"

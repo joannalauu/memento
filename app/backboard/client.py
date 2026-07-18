@@ -123,7 +123,9 @@ class Backboard:
     async def delete_assistant(self, assistant_id: Uuid) -> dict[str, Any]:
         return await self._client.delete_assistant(assistant_id)
 
-    async def clone_assistant(self, assistant_id: Uuid, **options: Any) -> AssistantCloneResponse:
+    async def clone_assistant(
+        self, assistant_id: Uuid, **options: Any
+    ) -> AssistantCloneResponse:
         return await self._client.clone_assistant(assistant_id, **options)
 
     # ─── Threads ──────────────────────────────────────────────────────────────
@@ -138,7 +140,9 @@ class Backboard:
         limit: int = 100,
     ) -> list[Thread]:
         if assistant_id is not None:
-            return await self._client.list_threads_for_assistant(assistant_id, skip=skip, limit=limit)
+            return await self._client.list_threads_for_assistant(
+                assistant_id, skip=skip, limit=limit
+            )
         return await self._client.list_threads(skip=skip, limit=limit)
 
     async def get_thread(self, thread_id: Uuid) -> Thread:
@@ -238,14 +242,18 @@ class Backboard:
         thread_id: Uuid,
         tool_outputs: list[ToolOutput | dict[str, str]],
     ) -> ChatMessagesResponse:
-        return await self._client.submit_tool_outputs_simple(thread_id, tool_outputs, stream=False)
+        return await self._client.submit_tool_outputs_simple(
+            thread_id, tool_outputs, stream=False
+        )
 
     async def stream_tool_outputs(
         self,
         thread_id: Uuid,
         tool_outputs: list[ToolOutput | dict[str, str]],
     ) -> AsyncIterator[dict[str, Any]]:
-        events = await self._client.submit_tool_outputs_simple(thread_id, tool_outputs, stream=True)
+        events = await self._client.submit_tool_outputs_simple(
+            thread_id, tool_outputs, stream=True
+        )
         async for event in events:
             yield event
 
@@ -332,7 +340,9 @@ class Backboard:
             await index.save()
         return result
 
-    async def search_memories(self, assistant_id: Uuid, query: str, limit: int = 5) -> dict[str, Any]:
+    async def search_memories(
+        self, assistant_id: Uuid, query: str, limit: int = 5
+    ) -> dict[str, Any]:
         """Semantic search. Returns ``{"memories": [...], "total_count": n}``."""
         return await self._client.search_memories(assistant_id, query, limit=limit)
 
@@ -342,7 +352,9 @@ class Backboard:
         page: int | None = None,
         page_size: int | None = None,
     ) -> MemoriesListResponse:
-        return await self._client.get_memories(assistant_id, page=page, page_size=page_size)
+        return await self._client.get_memories(
+            assistant_id, page=page, page_size=page_size
+        )
 
     async def get_memory(self, assistant_id: Uuid, memory_id: str) -> Memory:
         return await self._client.get_memory(assistant_id, memory_id)
@@ -353,7 +365,9 @@ class Backboard:
     async def get_memory_stats(self, assistant_id: Uuid) -> MemoryStats:
         return await self._client.get_memory_stats(assistant_id)
 
-    async def get_memory_operation_status(self, operation_id: str) -> MemoryOperationStatus:
+    async def get_memory_operation_status(
+        self, operation_id: str
+    ) -> MemoryOperationStatus:
         """Status of an async memory op (e.g. triggered by memory="Auto" chat
         turns, surfaced as ``memory_operation_id`` on message responses)."""
         return await self._client.get_memory_operation_status(operation_id)
@@ -370,7 +384,9 @@ class Backboard:
     ) -> BackboardDocument:
         return await self._client.upload_document_to_thread(thread_id, file_path)
 
-    async def list_assistant_documents(self, assistant_id: Uuid) -> list[BackboardDocument]:
+    async def list_assistant_documents(
+        self, assistant_id: Uuid
+    ) -> list[BackboardDocument]:
         return await self._client.list_assistant_documents(assistant_id)
 
     async def list_thread_documents(self, thread_id: Uuid) -> list[BackboardDocument]:
