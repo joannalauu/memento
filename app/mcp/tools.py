@@ -9,16 +9,19 @@ own org's data. Handlers reuse the same crud/toolsets the REST routes use.
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, get_args
 
 from beanie import PydanticObjectId
 
 from app.api_auth.dependencies import ApiKeyPrincipal
 from app.backboard.client import Backboard
 from app.context_engine import (
+    WalkEdgeKind,
     check_consistency,
     extract_anchors,
+    find_entry_points,
     find_related_context,
+    walk_graph,
 )
 from app.file_upload.crud import (
     get_document_index_entry,
@@ -223,6 +226,63 @@ async def _check_consistency(ctx: McpContext, args: dict[str, Any]) -> Any:
     return verdict.model_dump(mode="json")
 
 
+# ─── knowledge graph ──────────────────────────────────────────────────────────
+
+# Valid edge kinds an agent may filter a walk on (schema enum + arg validation).
+_WALK_EDGE_KINDS: frozenset[str] = frozenset(get_args(WalkEdgeKind))
+
+
+async def _find_entry_points(ctx: McpContext, args: dict[str, Any]) -> Any:
+    """Semantic entry into the knowledge graph: query -> nodes to start walking."""
+    query = _require(args, "query")
+    limit = _int_arg(args, "limit", 5)
+    # Optional repo scope — restrict entry points to one repo's decisions.
+    repo_id = None
+    if args.get("repo"):
+        repo = await _require_repo(ctx, args)
+        repo_id = repo.id
+    entries = await find_entry_points(
+        query,
+        bb=ctx.backboard,
+        assistant_id=ctx.org.bbAssistantId,
+        org_id=ctx.org.id,
+        repo_id=repo_id,
+        limit=limit,
+    )
+    return [e.model_dump(mode="json") for e in entries]
+
+
+async def _walk_graph(ctx: McpContext, args: dict[str, Any]) -> Any:
+    """Directed local walk from a node, neighbors grouped by edge kind."""
+    node_id = _require(args, "node_id")
+    depth = _int_arg(args, "depth", 1)
+
+    edge_kinds: frozenset[WalkEdgeKind] | None = None
+    raw_kinds = args.get("edge_kinds")
+    if raw_kinds:
+        if not isinstance(raw_kinds, list) or not all(
+            isinstance(k, str) for k in raw_kinds
+        ):
+            raise McpToolError("edge_kinds must be a list of strings")
+        unknown = set(raw_kinds) - _WALK_EDGE_KINDS
+        if unknown:
+            raise McpToolError(
+                f"Unknown edge kind(s): {', '.join(sorted(unknown))}; "
+                f"valid kinds: {', '.join(sorted(_WALK_EDGE_KINDS))}"
+            )
+        edge_kinds = frozenset(raw_kinds)  # type: ignore[arg-type]
+
+    try:
+        walk = await walk_graph(
+            node_id, org_id=ctx.org.id, edge_kinds=edge_kinds, depth=depth
+        )
+    except ValueError as exc:
+        # Malformed/unknown node id, cross-org feature node, or bad depth —
+        # all caller-fixable, so surface as a tool error, not a protocol error.
+        raise McpToolError(str(exc)) from exc
+    return walk.model_dump(mode="json")
+
+
 # ─── registry ─────────────────────────────────────────────────────────────────
 
 _NO_ARGS = {"type": "object", "properties": {}, "required": []}
@@ -365,6 +425,81 @@ MCP_TOOLS: list[McpTool] = [
             "required": ["repo", "diff"],
         },
         handler=_check_consistency,
+    ),
+    McpTool(
+        name="find_entry_points",
+        description=(
+            "Search your org's knowledge graph semantically and return the nodes "
+            "most relevant to a natural-language query — the places to start a "
+            "graph walk. Feed a returned nodeId into walk_graph to explore its "
+            "neighbors."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural-language description of what you're looking for.",
+                },
+                "repo": {
+                    "type": "string",
+                    "description": (
+                        "Optional. Restrict entry points to one repo, as "
+                        "'owner/name' or bare 'name'."
+                    ),
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max entry points to return (default 5).",
+                },
+            },
+            "required": ["query"],
+        },
+        handler=_find_entry_points,
+    ),
+    McpTool(
+        name="walk_graph",
+        description=(
+            "Walk your org's knowledge graph from one node, returning its "
+            "neighbors grouped by edge kind (governs, introduced, made, "
+            "belongs_to, superseded_by, supersedes). Get a starting nodeId from "
+            "find_entry_points. Optionally filter to specific edge kinds (e.g. "
+            "['superseded_by'] to trace a decision's evolution) and set depth=2 "
+            "to expand one further hop."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "node_id": {
+                    "type": "string",
+                    "description": "The node to walk from (a nodeId from find_entry_points).",
+                },
+                "edge_kinds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "governs",
+                            "introduced",
+                            "made",
+                            "belongs_to",
+                            "superseded_by",
+                            "supersedes",
+                        ],
+                    },
+                    "description": (
+                        "Optional. Only follow these edge kinds. Omit to return "
+                        "every kind."
+                    ),
+                },
+                "depth": {
+                    "type": "integer",
+                    "description": "Hops to expand: 1 (direct neighbors) or 2. Default 1.",
+                },
+            },
+            "required": ["node_id"],
+        },
+        handler=_walk_graph,
     ),
 ]
 
