@@ -7,7 +7,9 @@ from datetime import datetime, timedelta, timezone
 
 from beanie import PydanticObjectId
 from bson import ObjectId
+from bson.errors import InvalidId
 from gridfs.asynchronous import AsyncGridFSBucket
+from gridfs.errors import NoFile
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import DuplicateKeyError
 
@@ -133,6 +135,23 @@ async def upload_normalized(
         },
     )
     return str(file_id)
+
+
+async def download_transcript_blob(db: AsyncDatabase, ref: str) -> bytes | None:
+    """Fetch a blob (raw or normalized) from the transcript bucket; None
+    (logged) on a bad id or missing file. Shared by the normalizer and the
+    distillation pipeline."""
+    try:
+        oid = ObjectId(ref)
+    except (InvalidId, TypeError):
+        logger.warning("transcript ref %r is not a valid ObjectId", ref)
+        return None
+    try:
+        stream = await _transcript_bucket(db).open_download_stream(oid)
+        return await stream.read()
+    except NoFile:
+        logger.warning("transcript blob %s missing from GridFS", ref)
+        return None
 
 
 async def delete_transcript(db: AsyncDatabase, ref: str) -> None:

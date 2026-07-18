@@ -34,6 +34,15 @@ class PipelineJob(Document):
     status: Literal["queued", "running", "done", "failed"] = "queued"
     attempts: int = 0
     error: str | None = None
+    # A done job is either "distilled" (result holds a DistillationResult dump)
+    # or "no_sessions" (coverage gap, with gapDetail)
+    outcome: Literal["distilled", "no_sessions"] | None = None
+    result: dict | None = None  # DistillationResult.model_dump(mode="json")
+    gapDetail: str | None = None
+    # On a no_sessions gap: StaleMemoryFlag dumps for pre-existing memories on
+    # the changed files that a staleness_check found stale/gap
+    stalenessFlags: list[dict] | None = None
+    finishedAt: datetime | None = None
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Settings:

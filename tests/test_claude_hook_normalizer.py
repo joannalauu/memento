@@ -398,7 +398,7 @@ def driver_seams(monkeypatch):
     async def fake_delete(db, ref):
         calls["deleted"].append(ref)
 
-    monkeypatch.setattr(normalizer, "_download_transcript", fake_download)
+    monkeypatch.setattr(crud, "download_transcript_blob", fake_download)
     monkeypatch.setattr(crud, "upload_normalized", fake_upload)
     monkeypatch.setattr(normalizer, "_commit_normalized", fake_commit)
     monkeypatch.setattr(crud, "delete_transcript", fake_delete)
@@ -465,7 +465,7 @@ async def test_normalize_session_lost_race_gcs_new_blob(driver_seams, monkeypatc
 
 async def test_normalize_session_missing_blob_no_upload(driver_seams, monkeypatch):
     calls, state = driver_seams
-    state["raw"] = None  # _download_transcript logs and returns None on NoFile
+    state["raw"] = None  # download_transcript_blob logs and returns None on NoFile
     doc = _doc()
     _patch_get(monkeypatch, doc)
 

@@ -1,3 +1,9 @@
+import os
+
+# Must be set before app import: the lifespan starts the pipeline worker loop
+# unless disabled, and tests have no Mongo for it to poll.
+os.environ.setdefault("PIPELINE_WORKER_ENABLED", "0")
+
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport

@@ -30,9 +30,6 @@ import re
 from typing import Literal
 
 from beanie import PydanticObjectId
-from bson import ObjectId
-from bson.errors import InvalidId
-from gridfs.errors import NoFile
 from pydantic import BaseModel
 from pymongo.asynchronous.database import AsyncDatabase
 
@@ -339,21 +336,6 @@ def normalize_jsonl(
 # --- async driver -----------------------------------------------------------
 
 
-async def _download_transcript(db: AsyncDatabase, ref: str) -> bytes | None:
-    """Fetch a transcript blob; None (logged) on a bad id or missing file."""
-    try:
-        oid = ObjectId(ref)
-    except (InvalidId, TypeError):
-        logger.warning("transcript ref %r is not a valid ObjectId", ref)
-        return None
-    try:
-        stream = await crud._transcript_bucket(db).open_download_stream(oid)
-        return await stream.read()
-    except NoFile:
-        logger.warning("transcript blob %s missing from GridFS", ref)
-        return None
-
-
 async def _commit_normalized(
     doc_id: PydanticObjectId,
     expected_transcript_ref: str,
@@ -406,7 +388,7 @@ async def normalize_session(db: AsyncDatabase, agent_session_id: str) -> None:
         return
 
     expected_ref = doc.transcriptRef
-    raw = await _download_transcript(db, expected_ref)
+    raw = await crud.download_transcript_blob(db, expected_ref)
     if raw is None:
         return
 
