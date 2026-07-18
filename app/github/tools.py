@@ -372,6 +372,14 @@ def build_github_toolset(
     non-int numbers) raise here and become error outputs in the executor."""
     if org.githubInstallationId is None:
         raise GitHubError(f"Org '{org.slug}' has no GitHub App installation")
+    if not repo.active:
+        # Deactivated when the App was uninstalled or the repo dropped from the
+        # installation (see app/github/crud.py). Its installation token would
+        # 401/404 at GitHub anyway — fail fast with a clear reason.
+        raise GitHubError(
+            f"Repo '{repo.owner}/{repo.name}' is not connected "
+            "(GitHub App uninstalled or repo removed from the installation)"
+        )
     ts = GitHubToolset(
         gh,
         installation_id=org.githubInstallationId,
