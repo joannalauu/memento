@@ -89,6 +89,9 @@ class Repo(Document):
     owner: str
     name: str
     defaultBranch: str
+    # Connected repos are active; deactivated when the GitHub App is uninstalled
+    # or the repo is dropped from the installation (see app/github/crud.py).
+    active: bool = True
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Settings:

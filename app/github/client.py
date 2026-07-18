@@ -1,5 +1,6 @@
 """
-GitHub App client: auth chain + transport for the tool suite (see tools.py).
+GitHub App client: auth chain + transport for the tool suite (see tools.py) and
+the org installation flow (see routes.py / crud.py).
 
 Auth chain: app JWT (RS256, short-lived) → POST /app/installations/{id}/access_tokens
 → installation token (~1h), cached in-memory per installation id. Each org stores
@@ -7,6 +8,8 @@ its own `githubInstallationId` (app/orgs/models.py), so all calls are org-scoped
 """
 
 import asyncio
+import hashlib
+import hmac
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -36,6 +39,15 @@ class GitHubSettings(BaseSettings):
     private_key_path: str | None = None
     api_base_url: str = "https://api.github.com"
     timeout: int = 30
+
+    # ─── Installation flow (routes.py / crud.py) ──────────────────────────────
+    # Optional so the app boots for tool-suite-only use; required to drive the
+    # org install/webhook flow.
+    app_slug: str | None = None
+    webhook_secret: str | None = None
+    # Where to send the browser after a successful install. When unset the setup
+    # callback returns JSON instead of redirecting.
+    post_install_redirect_url: str | None = None
 
     def resolve_private_key(self) -> str:
         """Inline PEM wins over the file path. Resolved lazily (first JWT mint)
@@ -112,6 +124,20 @@ class GitHubApp:
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         await self.aclose()
+
+    # ─── URLs ─────────────────────────────────────────────────────────────────
+
+    def install_url(self, state: str) -> str:
+        """The GitHub-hosted installation page, carrying our attribution state."""
+        if not self.settings.app_slug:
+            raise RuntimeError(
+                "GitHub App slug not configured: set GITHUB_APP_SLUG to drive "
+                "the installation flow"
+            )
+        return (
+            f"https://github.com/apps/{self.settings.app_slug}"
+            f"/installations/new?state={state}"
+        )
 
     # ─── Auth ─────────────────────────────────────────────────────────────────
 
@@ -242,6 +268,41 @@ class GitHubApp:
             messages = "; ".join(e.get("message", str(e)) for e in body["errors"])
             raise GitHubError(f"GitHub GraphQL error: {messages}")
         return body["data"]
+
+    # ─── Repos ────────────────────────────────────────────────────────────────
+
+    async def list_installation_repos(self, installation_id: int) -> list[dict]:
+        """List every repo the installation can access, following pagination.
+        Routes through ``rest`` so it shares token caching and error handling."""
+        repos: list[dict] = []
+        page = 1
+        while True:
+            resp = await self.rest(
+                "GET",
+                "/installation/repositories",
+                installation_id=installation_id,
+                params={"per_page": 100, "page": page},
+            )
+            batch = resp.json().get("repositories", [])
+            repos.extend(batch)
+            if len(batch) < 100:
+                break
+            page += 1
+        return repos
+
+    # ─── Webhooks ─────────────────────────────────────────────────────────────
+
+    def verify_webhook(self, payload_body: bytes, signature_header: str | None) -> bool:
+        """Constant-time check of the ``X-Hub-Signature-256`` header against the
+        raw request body using the configured webhook secret. Fails closed when
+        the signature is missing or no secret is configured."""
+        if not signature_header or not self.settings.webhook_secret:
+            return False
+        secret = self.settings.webhook_secret.encode()
+        expected = (
+            "sha256=" + hmac.new(secret, payload_body, hashlib.sha256).hexdigest()
+        )
+        return hmac.compare_digest(expected, signature_header)
 
 
 def get_github(request: Request) -> GitHubApp:

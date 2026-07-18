@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.backboard.client import Backboard, get_backboard
 from app.dependencies import get_current_user
+from app.github.client import GitHubApp, get_github
+from app.github.crud import create_install_state
 from app.orgs.crud import (
     accept_org_invite,
     create_org,
@@ -95,6 +97,31 @@ async def list_org_members_endpoint(
             detail="Not a member of this org",
         )
     return await list_org_members(org)
+
+
+@router.get("/{org_id}/github/connect")
+async def connect_github_endpoint(
+    org_id: PydanticObjectId,
+    user: User = Depends(get_current_user),
+    github: GitHubApp = Depends(get_github),
+) -> dict[str, str]:
+    """Begin GitHub App installation for an org. Mints a single-use attribution
+    state and returns the GitHub install URL to redirect the browser to; the
+    install is bound to this org when GitHub calls back to /github/setup. Only
+    an admin member may connect GitHub."""
+    org: Org = await get_org(org_id)
+    if org is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Org not found"
+        )
+    is_admin = any(m.userId == user.id and m.role == "admin" for m in org.members)
+    if not is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only an org admin may connect GitHub",
+        )
+    state = await create_install_state(org_id=org_id, user_id=user.id)
+    return {"installUrl": github.install_url(state.token)}
 
 
 @router.get("/{org_id}/repos", response_model=list[RepoRead])

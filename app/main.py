@@ -1,6 +1,7 @@
 from app.api_auth.routes import router as api_auth_router
 from app.claude_hook.routes import router as claude_hook_router
 from app.file_upload.routes import router as documents_router
+from app.github.routes import router as github_router
 from app.hackplate import Hackplate
 from app.hackplate.lifespan import configure
 from app.lifespan import lifespan, pre_hackplate_lifespan
@@ -18,6 +19,7 @@ def register_routes(app: Hackplate) -> None:
     app.include_router(orgs_router, prefix="/orgs", tags=["orgs"])
     app.include_router(claude_hook_router, prefix="/ingest", tags=["ingest"])
     app.include_router(documents_router, prefix="/documents", tags=["documents"])
+    app.include_router(github_router, prefix="/github", tags=["github"])
 
 
 app = Hackplate(
