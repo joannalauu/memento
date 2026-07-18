@@ -13,7 +13,7 @@ import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from backboard import BackboardClient
 from backboard.models import (
@@ -68,7 +68,10 @@ class Backboard:
     or as an async context manager in scripts."""
 
     def __init__(self, settings: BackboardSettings | None = None) -> None:
-        self.settings = settings or BackboardSettings()
+        # api_key has no default because it's required — but BaseSettings
+        # fills it from the environment/.env at runtime, which the type
+        # checker can't see from the zero-arg constructor call.
+        self.settings = settings or BackboardSettings()  # pyright: ignore[reportCallIssue]
         self._client = BackboardClient(
             api_key=self.settings.api_key,
             base_url=self.settings.base_url,
@@ -175,23 +178,31 @@ class Backboard:
     ) -> ChatMessagesResponse:
         """Non-streaming send. Omit thread_id to auto-create a thread pinned
         to assistant_id; the response carries both ids for continuation."""
-        return await self._client.send_message(
-            content,
-            thread_id=thread_id,
-            assistant_id=assistant_id,
-            system_prompt=system_prompt,
-            llm_provider=llm_provider,
-            model_name=model_name,
-            stream=False,
-            memory=memory,
-            memory_pro=memory_pro,
-            memory_response_citation=memory_response_citation,
-            web_search=web_search,
-            json_output=json_output,
-            tools=tools,
-            thinking=thinking,
-            metadata=metadata,
-            **extra,
+        # The SDK declares a single non-overloaded signature returning
+        # ChatMessagesResponse | AsyncIterator[Dict[str, Any]] regardless of
+        # `stream`'s value (no @overload keyed on Literal[True]/[False]), so
+        # the type checker can't narrow away the iterator branch even though
+        # stream=False always returns ChatMessagesResponse at runtime.
+        return cast(
+            ChatMessagesResponse,
+            await self._client.send_message(
+                content,
+                thread_id=thread_id,
+                assistant_id=assistant_id,
+                system_prompt=system_prompt,
+                llm_provider=llm_provider,
+                model_name=model_name,
+                stream=False,
+                memory=memory,
+                memory_pro=memory_pro,
+                memory_response_citation=memory_response_citation,
+                web_search=web_search,
+                json_output=json_output,
+                tools=tools,
+                thinking=thinking,
+                metadata=metadata,
+                **extra,
+            ),
         )
 
     async def stream_message(
@@ -216,23 +227,29 @@ class Backboard:
         """Streaming send. Yields SSE event dicts (``type`` is one of
         ``content_streaming``, ``reasoning_streaming``, ``reasoning_ended``,
         ``tool_submit_required``, ``run_ended``)."""
-        events = await self._client.send_message(
-            content,
-            thread_id=thread_id,
-            assistant_id=assistant_id,
-            system_prompt=system_prompt,
-            llm_provider=llm_provider,
-            model_name=model_name,
-            stream=True,
-            memory=memory,
-            memory_pro=memory_pro,
-            memory_response_citation=memory_response_citation,
-            web_search=web_search,
-            json_output=json_output,
-            tools=tools,
-            thinking=thinking,
-            metadata=metadata,
-            **extra,
+        # Same untyped-stream-flag gap as send_message above: stream=True
+        # always yields events at runtime, but the SDK's return type doesn't
+        # narrow away the ChatMessagesResponse branch.
+        events = cast(
+            AsyncIterator[dict[str, Any]],
+            await self._client.send_message(
+                content,
+                thread_id=thread_id,
+                assistant_id=assistant_id,
+                system_prompt=system_prompt,
+                llm_provider=llm_provider,
+                model_name=model_name,
+                stream=True,
+                memory=memory,
+                memory_pro=memory_pro,
+                memory_response_citation=memory_response_citation,
+                web_search=web_search,
+                json_output=json_output,
+                tools=tools,
+                thinking=thinking,
+                metadata=metadata,
+                **extra,
+            ),
         )
         async for event in events:
             yield event
@@ -242,8 +259,12 @@ class Backboard:
         thread_id: Uuid,
         tool_outputs: list[ToolOutput | dict[str, str]],
     ) -> ChatMessagesResponse:
-        return await self._client.submit_tool_outputs_simple(
-            thread_id, tool_outputs, stream=False
+        # Same untyped-stream-flag gap as send_message (see above).
+        return cast(
+            ChatMessagesResponse,
+            await self._client.submit_tool_outputs_simple(
+                thread_id, tool_outputs, stream=False
+            ),
         )
 
     async def stream_tool_outputs(
@@ -251,8 +272,11 @@ class Backboard:
         thread_id: Uuid,
         tool_outputs: list[ToolOutput | dict[str, str]],
     ) -> AsyncIterator[dict[str, Any]]:
-        events = await self._client.submit_tool_outputs_simple(
-            thread_id, tool_outputs, stream=True
+        events = cast(
+            AsyncIterator[dict[str, Any]],
+            await self._client.submit_tool_outputs_simple(
+                thread_id, tool_outputs, stream=True
+            ),
         )
         async for event in events:
             yield event
