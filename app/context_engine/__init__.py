@@ -11,20 +11,31 @@ Plus a standalone freshness probe and its cached background sweep:
     staleness_check(memory, ...)  async: memory -> StalenessVerdict (fresh/stale/gap)
     sweep_repo_staleness(...)     async: precompute + cache verdicts onto memoryIndex
 
-The pipeline stages and `staleness_check` are read-only. The sweep
-(`refresh_staleness` / `sweep_repo_staleness`) is the one write path — it stamps
-cached staleness onto memoryIndex so the graph renders without calling GitHub.
+And two graph-traversal primitives an agent navigates the knowledge graph with:
+
+    find_entry_points(query)     async: query -> list[EntryPoint] (nodes to start on)
+    walk_graph(nodeId)           async: node -> GraphWalk (neighbors by edge kind)
+
+The pipeline stages, `staleness_check`, and the graph tools are read-only. The
+sweep (`refresh_staleness` / `sweep_repo_staleness`) is the one write path — it
+stamps cached staleness onto memoryIndex so the graph renders without calling
+GitHub.
 """
 
 from app.context_engine.anchors import extract_anchors
 from app.context_engine.consistency import check_consistency
+from app.context_engine.graph_tools import find_entry_points, walk_graph
 from app.context_engine.retrieval import find_related_context
 from app.context_engine.schemas import (
     ConsistencyConflict,
     ConsistencyMode,
     ConsistencyVerdict,
+    EntryPoint,
+    GraphWalk,
     RelatedMemory,
     StalenessVerdict,
+    WalkEdgeKind,
+    WalkNeighbor,
 )
 from app.context_engine.staleness import staleness_check
 from app.context_engine.staleness_sweep import (
@@ -37,13 +48,19 @@ __all__ = [
     "ConsistencyConflict",
     "ConsistencyMode",
     "ConsistencyVerdict",
+    "EntryPoint",
+    "GraphWalk",
     "RelatedMemory",
     "StalenessVerdict",
+    "WalkEdgeKind",
+    "WalkNeighbor",
     "check_consistency",
     "extract_anchors",
+    "find_entry_points",
     "find_related_context",
     "refresh_staleness",
     "stamp_verdict",
     "staleness_check",
     "sweep_repo_staleness",
+    "walk_graph",
 ]

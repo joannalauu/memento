@@ -26,6 +26,7 @@ from math import log2
 from beanie import PydanticObjectId
 
 from app.backboard.models import MemoryIndex
+from app.graph import ids
 from app.graph.schemas import (
     GraphLink,
     GraphNode,
@@ -36,18 +37,10 @@ from app.graph.schemas import (
 from app.orgs.models import User
 
 GRAPH_CACHE_TTL = 60.0  # seconds; new nodes only appear when a PR is distilled
-_LABEL_MAX = 60
 
 _CacheKey = tuple[str, str | None, str | None, tuple[str, ...] | None]
 _cache: dict[_CacheKey, tuple[float, GraphPayload]] = {}
 _cache_locks: dict[_CacheKey, asyncio.Lock] = defaultdict(asyncio.Lock)
-
-
-def _short_label(content: str) -> str:
-    """First line of the content snapshot, truncated for canvas labels."""
-    stripped = content.strip()
-    first = stripped.splitlines()[0] if stripped else "(empty)"
-    return first if len(first) <= _LABEL_MAX else first[: _LABEL_MAX - 1] + "…"
 
 
 async def _load_decisions(query: dict) -> list[MemoryIndex]:
@@ -61,7 +54,11 @@ async def _names_by_user_id(
     if not user_ids:
         return {}
     users = await User.find({"_id": {"$in": list(user_ids)}}).to_list()
-    return {u.id: (u.name or u.githubUsername or u.email or "unknown") for u in users}
+    return {
+        u.id: (u.name or u.githubUsername or u.email or "unknown")
+        for u in users
+        if u.id
+    }
 
 
 async def build_graph(
@@ -97,12 +94,12 @@ async def build_graph(
 
     for d in decisions:
         repo_name = d.anchors.repo
-        dec_id = f"dec:{d.id}"
+        dec_id = ids.decision_id(d.id)
         ensure(
             GraphNode(
                 id=dec_id,
                 type="decision",
-                label=_short_label(d.contentSnapshot),
+                label=ids.short_label(d.contentSnapshot),
                 val=1,
                 meta=GraphNodeMeta(
                     prNumber=d.prNumber,
@@ -118,7 +115,7 @@ async def build_graph(
 
         # governs: one edge per anchored file, symbols folded onto the edge
         for path in d.anchors.files:
-            file_id = f"file:{repo_name}:{path}"
+            file_id = ids.file_id(repo_name, path)
             ensure(
                 GraphNode(
                     id=file_id,
@@ -141,7 +138,7 @@ async def build_graph(
 
         # introduced
         if d.prNumber is not None:
-            pr_id = f"pr:{repo_name}:{d.prNumber}"
+            pr_id = ids.pr_id(repo_name, d.prNumber)
             ensure(
                 GraphNode(
                     id=pr_id,
@@ -157,7 +154,7 @@ async def build_graph(
 
         # made
         if d.authorUserId:
-            eng_id = f"eng:{d.authorUserId}"
+            eng_id = ids.engineer_id(d.authorUserId)
             ensure(
                 GraphNode(
                     id=eng_id,
@@ -172,7 +169,7 @@ async def build_graph(
 
         # belongs_to
         if d.feature:
-            feat_id = f"feat:{org_id}:{d.feature}"
+            feat_id = ids.feature_id(org_id, d.feature)
             ensure(
                 GraphNode(
                     id=feat_id,
@@ -193,7 +190,7 @@ async def build_graph(
             links.append(
                 GraphLink(
                     source=dec_id,
-                    target=f"dec:{d.supersededBy}",
+                    target=ids.decision_id(d.supersededBy),
                     kind="superseded_by",
                 )
             )
