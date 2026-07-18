@@ -28,6 +28,20 @@ async def list_user_orgs(user_id: PydanticObjectId) -> list[Org]:
     return await Org.find({"members.userId": user_id}).to_list()
 
 
+async def resolve_api_key(raw_key: str) -> ApiKey | None:
+    """Resolve a raw API key presented by a client to its stored record.
+
+    Hashes the incoming key and looks it up by `keyHash` (only the hash is
+    stored). On a hit, stamps `lastUsedAt` and returns the record — the caller
+    reads `userId`/`orgId` off it. Returns None if no key matches."""
+    doc = await ApiKey.find_one(ApiKey.keyHash == hash_api_key(raw_key))
+    if doc is None:
+        return None
+    doc.lastUsedAt = datetime.now(timezone.utc)
+    await doc.save()
+    return doc
+
+
 async def list_user_api_keys(user_id: PydanticObjectId) -> list[ApiKey]:
     """All API keys owned by the user, newest first. Never exposes the raw key
     (which isn't stored) — callers must project away `keyHash` when serializing."""

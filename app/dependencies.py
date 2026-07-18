@@ -4,6 +4,11 @@ from fastapi import Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 from pymongo.asynchronous.database import AsyncDatabase
 
+from app.api_auth.dependencies import (  # noqa: F401  re-exported for convenience
+    ApiKeyPrincipal,
+    get_api_key_principal,
+    get_api_key_user,
+)
 from app.hackplate import HackplateRequest
 from app.hackplate.dependencies import (
     hackplate_authenticate,
