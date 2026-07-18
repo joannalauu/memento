@@ -25,3 +25,15 @@ class OrgRead(BaseModel):
     bbAssistantId: str
     members: list[OrgMember]
     createdAt: datetime
+
+
+class RepoRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: PydanticObjectId
+    orgId: PydanticObjectId
+    githubRepoId: int
+    owner: str
+    name: str
+    defaultBranch: str
+    createdAt: datetime

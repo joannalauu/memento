@@ -3,9 +3,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.backboard.client import Backboard, get_backboard
 from app.dependencies import get_current_user
-from app.orgs.crud import create_org, delete_org, get_org, update_org
+from app.orgs.crud import (
+    create_org,
+    delete_org,
+    get_org,
+    list_repos_for_org,
+    update_org,
+)
 from app.orgs.models import Org, User
-from app.orgs.schemas import OrgCreate, OrgRead, OrgUpdate
+from app.orgs.schemas import OrgCreate, OrgRead, OrgUpdate, RepoRead
 
 router = APIRouter()
 
@@ -44,6 +50,26 @@ async def get_org_endpoint(
             detail="Not a member of this org",
         )
     return org
+
+
+@router.get("/{org_id}/repos", response_model=list[RepoRead])
+async def list_org_repos_endpoint(
+    org_id: PydanticObjectId,
+    user: User = Depends(get_current_user),
+) -> list[RepoRead]:
+    """List an org's repos. Only a member of the org may view them."""
+    org: Org = await get_org(org_id)
+    if org is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Org not found"
+        )
+    is_member = any(m.userId == user.id for m in org.members)
+    if not is_member:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a member of this org",
+        )
+    return await list_repos_for_org(org_id)
 
 
 @router.patch("/{org_id}", response_model=OrgRead)

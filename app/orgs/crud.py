@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from beanie import PydanticObjectId
 
-from app.orgs.models import Org, OrgMember
+from app.orgs.models import Org, OrgMember, Repo
 from app.orgs.schemas import OrgUpdate
 
 
@@ -55,3 +55,8 @@ async def update_org(org: Org, payload: OrgUpdate) -> Org:
 async def delete_org(org: Org) -> None:
     """Delete an org document."""
     await org.delete()
+
+
+async def list_repos_for_org(org_id: PydanticObjectId) -> list[Repo]:
+    """List an org's repos, newest first."""
+    return await Repo.find(Repo.orgId == org_id).sort(-Repo.createdAt).to_list()
