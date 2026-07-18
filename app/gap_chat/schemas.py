@@ -50,8 +50,10 @@ class AnswerRequest(BaseModel):
 
 
 class AnswerResult(BaseModel):
-    """Outcome of answering: the resolved chat plus what happened to the memory."""
+    """Outcome of answering: the resolved chat plus what happened to the memory.
+    ``transcript`` is populated only for voice answers."""
 
     chat: GapChatRead
     resolution: GapResolution
     supersededByMemoryId: str | None = None
+    transcript: str | None = None

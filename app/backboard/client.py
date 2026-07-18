@@ -49,6 +49,35 @@ class BackboardSettings(BaseSettings):
     api_key: str
     base_url: str = "https://app.backboard.io/api"
     timeout: int = 30
+    # Speech-to-text provider/model for voice answers (BACKBOARD_STT_*). Backboard
+    # routes STT through ElevenLabs by default; override for a different model.
+    stt_provider: str = "elevenlabs"
+    stt_model: str = "scribe_v1"
+
+    def stt_config(self) -> dict[str, str]:
+        """The ``voice.stt`` sub-config Backboard passes to the STT provider."""
+        return {"provider": self.stt_provider, "model": self.stt_model}
+
+
+def _extract_transcript(response: ChatMessagesResponse) -> str:
+    """Pull the STT transcript out of an add_message response. Backboard nests it
+    under ``voice_records`` (top-level or under ``stt``); fall back to the saved
+    message content. Empty string when nothing transcribable came back."""
+    if not response.messages:
+        return ""
+    message = response.messages[-1]
+    records = message.get("voice_records") or {}
+    candidates = (
+        records.get("transcript"),
+        (records.get("stt") or {}).get("transcript")
+        if isinstance(records.get("stt"), dict)
+        else None,
+    )
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    content = message.get("content")
+    return content.strip() if isinstance(content, str) else ""
 
 
 def _inject_repo(repo: str, content: str) -> str:
@@ -283,6 +312,33 @@ class Backboard:
 
     async def cancel_run(self, thread_id: Uuid, run_id: str) -> dict[str, Any]:
         return await self._client.cancel_run(thread_id, run_id)
+
+    # ─── Speech-to-text ────────────────────────────────────────────────────────
+
+    async def transcribe_audio(
+        self,
+        *,
+        thread_id: Uuid,
+        audio_path: str | Path,
+        stt_config: dict[str, Any] | None = None,
+    ) -> str:
+        """Transcribe an audio file to text via the assistant's STT provider
+        (ElevenLabs by default). Runs with ``send_to_llm="false"`` so the turn
+        only transcribes — no model reply — and returns the transcript string.
+
+        STT is thread-scoped in Backboard (it routes through ``add_message``), so
+        a ``thread_id`` is required; the transcript is saved as that thread's
+        latest message. Returns "" when nothing transcribable came back."""
+        response = cast(
+            ChatMessagesResponse,
+            await self._client.add_message(
+                thread_id,
+                voice={"stt": stt_config or self.settings.stt_config()},
+                audio_file=audio_path,
+                send_to_llm="false",
+            ),
+        )
+        return _extract_transcript(response)
 
     # ─── Memories ─────────────────────────────────────────────────────────────
 

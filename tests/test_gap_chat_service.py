@@ -292,3 +292,77 @@ async def test_answer_when_memory_gone_dismisses(monkeypatch, patch_crud, org):
     chat = make_chat()
     result = await submit_answer(chat, "yes", org=org, bb=bb)
     assert result.status == "dismissed"
+
+
+# ─── voice answers (STT) ──────────────────────────────────────────────────────
+
+
+async def test_ensure_thread_returns_existing(org):
+    bb = SimpleNamespace(create_thread=AsyncMock())
+    chat = make_chat(bbThreadId="t-existing")
+    assert await service.ensure_thread(chat, org=org, bb=bb) == "t-existing"
+    bb.create_thread.assert_not_called()
+
+
+async def test_ensure_thread_creates_and_persists(org):
+    bb = SimpleNamespace(
+        create_thread=AsyncMock(return_value=SimpleNamespace(id="t-new"))
+    )
+    chat = make_chat(bbThreadId=None, save=AsyncMock())
+    got = await service.ensure_thread(chat, org=org, bb=bb)
+    assert got == "t-new"
+    assert chat.bbThreadId == "t-new"
+    chat.save.assert_awaited_once()
+
+
+async def test_ensure_thread_none_on_failure(org):
+    bb = SimpleNamespace(create_thread=AsyncMock(side_effect=RuntimeError("down")))
+    chat = make_chat(bbThreadId=None, save=AsyncMock())
+    assert await service.ensure_thread(chat, org=org, bb=bb) is None
+
+
+async def test_submit_audio_answer_transcribes_then_delegates(monkeypatch, org):
+    chat = make_chat(bbThreadId="t-1")
+    bb = SimpleNamespace(transcribe_audio=AsyncMock(return_value="yes still accurate"))
+    submit = AsyncMock(return_value=make_chat(status="verified"))
+    monkeypatch.setattr(service, "submit_answer", submit)
+
+    result_chat, transcript = await service.submit_audio_answer(
+        chat, "/tmp/a.webm", org=org, bb=bb, author_user_id="u1"
+    )
+
+    assert transcript == "yes still accurate"
+    assert result_chat.status == "verified"
+    bb.transcribe_audio.assert_awaited_once_with(
+        thread_id="t-1", audio_path="/tmp/a.webm"
+    )
+    # the transcript is what flows into the normal answer flow
+    _, kw = submit.call_args
+    assert submit.call_args[0][1] == "yes still accurate"
+    assert kw["author_user_id"] == "u1"
+
+
+async def test_submit_audio_answer_raises_without_thread(monkeypatch, org):
+    chat = make_chat(bbThreadId=None, save=AsyncMock())
+    bb = SimpleNamespace(
+        create_thread=AsyncMock(side_effect=RuntimeError("down")),
+        transcribe_audio=AsyncMock(),
+    )
+    submit = AsyncMock()
+    monkeypatch.setattr(service, "submit_answer", submit)
+
+    with pytest.raises(service.TranscriptionError):
+        await service.submit_audio_answer(chat, "/tmp/a.webm", org=org, bb=bb)
+    bb.transcribe_audio.assert_not_called()
+    submit.assert_not_called()  # memory untouched
+
+
+async def test_submit_audio_answer_raises_on_empty_transcript(monkeypatch, org):
+    chat = make_chat(bbThreadId="t-1")
+    bb = SimpleNamespace(transcribe_audio=AsyncMock(return_value="   "))
+    submit = AsyncMock()
+    monkeypatch.setattr(service, "submit_answer", submit)
+
+    with pytest.raises(service.TranscriptionError):
+        await service.submit_audio_answer(chat, "/tmp/a.webm", org=org, bb=bb)
+    submit.assert_not_called()

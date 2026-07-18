@@ -3,7 +3,9 @@ from unittest.mock import AsyncMock
 import pytest
 from beanie import PydanticObjectId
 
-from app.backboard.client import Backboard, BackboardSettings
+from backboard.models import ChatMessagesResponse
+
+from app.backboard.client import Backboard, BackboardSettings, _extract_transcript
 from app.backboard.models import MemoryIndex
 
 
@@ -212,3 +214,59 @@ async def test_list_threads_dispatches_on_assistant_id(bb):
     bb._client.list_threads_for_assistant.assert_awaited_once_with(
         "assistant-1", skip=0, limit=10
     )
+
+
+# ─── speech-to-text ───────────────────────────────────────────────────────────
+
+
+def _msg_response(message: dict) -> ChatMessagesResponse:
+    return ChatMessagesResponse(messages=[message])
+
+
+def test_extract_transcript_prefers_voice_records_transcript():
+    r = _msg_response(
+        {"voice_records": {"transcript": "  hello world  "}, "content": "x"}
+    )
+    assert _extract_transcript(r) == "hello world"
+
+
+def test_extract_transcript_reads_nested_stt():
+    r = _msg_response({"voice_records": {"stt": {"transcript": "nested"}}})
+    assert _extract_transcript(r) == "nested"
+
+
+def test_extract_transcript_falls_back_to_content():
+    r = _msg_response({"voice_records": {}, "content": "fallback text"})
+    assert _extract_transcript(r) == "fallback text"
+
+
+def test_extract_transcript_empty_when_nothing_usable():
+    assert (
+        _extract_transcript(_msg_response({"voice_records": {}, "content": "  "})) == ""
+    )
+    assert _extract_transcript(ChatMessagesResponse(messages=[])) == ""
+
+
+async def test_transcribe_audio_uses_stt_config_and_no_llm(bb):
+    bb._client.add_message.return_value = _msg_response(
+        {"voice_records": {"transcript": "spoken answer"}}
+    )
+    out = await bb.transcribe_audio(thread_id="t-1", audio_path="/tmp/a.webm")
+
+    assert out == "spoken answer"
+    args, kwargs = bb._client.add_message.call_args
+    assert args[0] == "t-1"  # thread-scoped
+    assert kwargs["audio_file"] == "/tmp/a.webm"
+    assert kwargs["send_to_llm"] == "false"  # transcribe only, no model reply
+    assert kwargs["voice"] == {"stt": {"provider": "elevenlabs", "model": "scribe_v1"}}
+
+
+async def test_transcribe_audio_honors_settings_override():
+    wrapper = Backboard(
+        BackboardSettings(api_key="k", stt_provider="whisper", stt_model="large-v3")
+    )
+    wrapper._client = AsyncMock()
+    wrapper._client.add_message.return_value = _msg_response({"content": "hi"})
+    await wrapper.transcribe_audio(thread_id="t", audio_path="/tmp/a.m4a")
+    kwargs = wrapper._client.add_message.call_args.kwargs
+    assert kwargs["voice"] == {"stt": {"provider": "whisper", "model": "large-v3"}}

@@ -283,3 +283,50 @@ async def submit_answer(
     chat.resolvedAt = datetime.now(timezone.utc)
     await crud.append_message(chat, "assistant", summary)
     return chat
+
+
+class TranscriptionError(RuntimeError):
+    """STT could not produce a usable transcript for a voice answer — raised
+    before anything is mutated, so the chat is safe to retry."""
+
+
+async def ensure_thread(chat: GapChat, *, org: Org, bb: Backboard) -> str | None:
+    """The chat's Backboard thread, creating and persisting one if the chat
+    opened without it (thread creation is best-effort at open time). Returns None
+    if a thread still can't be created."""
+    if chat.bbThreadId:
+        return chat.bbThreadId
+    try:
+        thread = await bb.create_thread(org.bbAssistantId)
+    except Exception:  # noqa: BLE001 — surfaced to the caller as "no thread"
+        logger.warning("could not create Backboard thread for gap chat %s", chat.id)
+        return None
+    chat.bbThreadId = str(thread.id)
+    await chat.save()
+    return chat.bbThreadId
+
+
+async def submit_audio_answer(
+    chat: GapChat,
+    audio_path: str,
+    *,
+    org: Org,
+    bb: Backboard,
+    author_user_id=None,
+) -> tuple[GapChat, str]:
+    """Answer by voice: transcribe the audio (ElevenLabs STT via Backboard), then
+    run the transcript through the exact same verify/supersede flow as a typed
+    answer. Returns ``(chat, transcript)``.
+
+    Raises `TranscriptionError` when no thread is available for STT or the audio
+    yields no text — the memory is left untouched so the answer can be retried."""
+    thread_id = await ensure_thread(chat, org=org, bb=bb)
+    if thread_id is None:
+        raise TranscriptionError("no Backboard thread available for transcription")
+    transcript = await bb.transcribe_audio(thread_id=thread_id, audio_path=audio_path)
+    if not transcript.strip():
+        raise TranscriptionError("no speech detected in the audio")
+    chat = await submit_answer(
+        chat, transcript, org=org, bb=bb, author_user_id=author_user_id
+    )
+    return chat, transcript

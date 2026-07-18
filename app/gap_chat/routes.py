@@ -1,15 +1,48 @@
+import os
+import shutil
+import tempfile
+from pathlib import Path
+
 from beanie import PydanticObjectId
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    UploadFile,
+    status,
+)
 
 from app.backboard.client import Backboard, get_backboard
 from app.dependencies import get_current_user
 from app.gap_chat import crud, service
-from app.gap_chat.models import GapChatStatus
+from app.gap_chat.models import GapChat, GapChatStatus
 from app.gap_chat.schemas import AnswerRequest, AnswerResult, GapChatRead
 from app.orgs.crud import get_org
 from app.orgs.models import Org, User
 
 router = APIRouter()
+
+
+def _answer_result(chat: GapChat, transcript: str | None = None) -> AnswerResult:
+    """Map a post-answer chat to the response, raising for the non-resolving
+    outcomes: still-open (classification failed) or dismissed (memory gone)."""
+    if chat.status == "open":
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail="Could not classify the answer; please retry.",
+        )
+    if chat.status == "dismissed":
+        raise HTTPException(
+            status.HTTP_410_GONE,
+            detail="The memory under review is no longer active.",
+        )
+    return AnswerResult(
+        chat=GapChatRead.model_validate(chat),
+        resolution="verified" if chat.status == "verified" else "superseded",
+        supersededByMemoryId=chat.supersededByMemoryId,
+        transcript=transcript,
+    )
 
 
 async def _require_member(org_id: PydanticObjectId, user: User) -> Org:
@@ -71,19 +104,47 @@ async def answer_gap_chat_endpoint(
     chat = await service.submit_answer(
         chat, payload.answer, org=org, bb=backboard, author_user_id=user.id
     )
-    if chat.status == "open":
-        # Classification failed; the answer is recorded but nothing resolved.
+    return _answer_result(chat)
+
+
+@router.post("/{org_id}/{chat_id}/answer/audio", response_model=AnswerResult)
+async def answer_gap_chat_audio_endpoint(
+    org_id: PydanticObjectId,
+    chat_id: PydanticObjectId,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    backboard: Backboard = Depends(get_backboard),
+) -> AnswerResult:
+    """Answer the verification question by voice: the uploaded audio is
+    transcribed (ElevenLabs speech-to-text via Backboard) and the transcript runs
+    through the same verify/supersede flow as a typed answer."""
+    org = await _require_member(org_id, user)
+    chat = await crud.get_gap_chat(org_id, chat_id)
+    if chat is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Gap chat not found")
+    if chat.status != "open":
         raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            detail="Could not classify the answer; please retry.",
+            status.HTTP_409_CONFLICT, detail="Gap chat is already resolved"
         )
-    if chat.status == "dismissed":
+
+    # The SDK transcribes from a path, so spool the upload to a temp file first,
+    # preserving the suffix so the STT provider can infer the audio format.
+    suffix = Path(file.filename or "").suffix
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+    try:
+        with os.fdopen(tmp_fd, "wb") as tmp:
+            shutil.copyfileobj(file.file, tmp)
+        chat, transcript = await service.submit_audio_answer(
+            chat, tmp_path, org=org, bb=backboard, author_user_id=user.id
+        )
+    except service.TranscriptionError as exc:
         raise HTTPException(
-            status.HTTP_410_GONE,
-            detail="The memory under review is no longer active.",
-        )
-    return AnswerResult(
-        chat=GapChatRead.model_validate(chat),
-        resolution="verified" if chat.status == "verified" else "superseded",
-        supersededByMemoryId=chat.supersededByMemoryId,
-    )
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+    return _answer_result(chat, transcript=transcript)
