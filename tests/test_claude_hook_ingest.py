@@ -119,9 +119,9 @@ async def test_upsert_inserts_fresh(monkeypatch):
     monkeypatch.setattr(AgentSession, "find_one", staticmethod(fake_find_one))
     monkeypatch.setattr(AgentSession, "insert", fake_insert)
 
-    doc, old_ref = await crud.upsert_agent_session(**_kwargs())
+    doc, old_refs = await crud.upsert_agent_session(**_kwargs())
 
-    assert old_ref is None
+    assert old_refs == []
     assert inserted == [doc]
     assert doc.status == "stored"
     assert doc.updatedAt is None  # first capture
@@ -134,6 +134,7 @@ async def test_upsert_replaces_existing(monkeypatch):
         sessionId="sess-1",
         transcriptRef="ref-old",
         normalizedRef="norm-old",
+        normalizedTokenEstimate=99,
         status="normalized",
         updatedAt=None,
     )
@@ -149,12 +150,13 @@ async def test_upsert_replaces_existing(monkeypatch):
     monkeypatch.setattr(AgentSession, "find_one", staticmethod(fake_find_one))
     monkeypatch.setattr(AgentSession, "save", fake_save)
 
-    doc, old_ref = await crud.upsert_agent_session(**_kwargs())
+    doc, old_refs = await crud.upsert_agent_session(**_kwargs())
 
     assert doc is existing
-    assert old_ref == "ref-old"
+    assert old_refs == ["ref-old", "norm-old"]  # both blobs superseded
     assert doc.transcriptRef == "ref-new"
     assert doc.normalizedRef is None  # cleared → re-normalize
+    assert doc.normalizedTokenEstimate is None
     assert doc.status == "stored"
     assert doc.updatedAt is not None
     assert saved == [existing]
@@ -180,10 +182,10 @@ async def test_upsert_falls_through_on_insert_race(monkeypatch):
     monkeypatch.setattr(AgentSession, "insert", fake_insert)
     monkeypatch.setattr(AgentSession, "save", fake_save)
 
-    doc, old_ref = await crud.upsert_agent_session(**_kwargs())
+    doc, old_refs = await crud.upsert_agent_session(**_kwargs())
 
     assert doc is existing
-    assert old_ref == "ref-old"
+    assert old_refs == ["ref-old"]
     assert calls["find"] == 2
 
 
@@ -214,7 +216,7 @@ def api_client(monkeypatch):
     async def fake_delete(db, ref):
         deleted.append(ref)
 
-    async def fake_enqueue(agent_session_id):
+    async def fake_enqueue(db, agent_session_id):
         return None
 
     monkeypatch.setattr(crud, "upload_transcript", fake_upload)
@@ -246,7 +248,7 @@ async def test_ingest_accepts_and_returns_202(api_client, monkeypatch):
         doc = AgentSession.model_construct(
             id=PydanticObjectId(), sessionId=kwargs["session_id"], status="stored"
         )
-        return doc, None  # first capture, no old blob
+        return doc, []  # first capture, no old blobs
 
     monkeypatch.setattr(crud, "find_repo_by_remote", fake_find_repo)
     monkeypatch.setattr(crud, "upsert_agent_session", fake_upsert)
@@ -281,7 +283,7 @@ async def test_ingest_gcs_old_blob_after_upsert(api_client, monkeypatch):
         doc = AgentSession.model_construct(
             id=PydanticObjectId(), sessionId=kwargs["session_id"], status="stored"
         )
-        return doc, "ref-old"  # resumed session → old blob to GC
+        return doc, ["ref-old", "norm-old"]  # resumed session → blobs to GC
 
     monkeypatch.setattr(crud, "find_repo_by_remote", fake_find_repo)
     monkeypatch.setattr(crud, "upsert_agent_session", fake_upsert)
@@ -298,7 +300,8 @@ async def test_ingest_gcs_old_blob_after_upsert(api_client, monkeypatch):
         )
 
     assert resp.status_code == 202
-    assert deleted == ["ref-old"]  # GC'd only after a successful upsert
+    # both superseded blobs GC'd, only after a successful upsert
+    assert deleted == ["ref-old", "norm-old"]
 
 
 async def test_ingest_404_on_missing_remote(api_client):

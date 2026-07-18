@@ -113,6 +113,26 @@ async def upload_transcript(db: AsyncDatabase, session_id: str, raw: bytes) -> s
     return str(file_id)
 
 
+async def upload_normalized(
+    db: AsyncDatabase, session_id: str, blob: bytes, *, source_ref: str
+) -> str:
+    """Store a normalized (signal-only) JSONL blob in GridFS.
+
+    Lives in the same bucket as raw transcripts; kind/sourceRef metadata keeps
+    orphan sweeps and debugging tractable."""
+    file_id = await _transcript_bucket(db).upload_from_stream(
+        f"{session_id}.normalized.jsonl",
+        blob,
+        metadata={
+            "sessionId": session_id,
+            "contentType": "application/x-ndjson",
+            "kind": "normalized",
+            "sourceRef": source_ref,
+        },
+    )
+    return str(file_id)
+
+
 async def delete_transcript(db: AsyncDatabase, ref: str) -> None:
     """Best-effort GridFS blob GC. Never raises — a missing file or bad id is
     logged and swallowed so it can't fail an otherwise-successful ingest."""
@@ -131,20 +151,23 @@ async def upsert_agent_session(
     branch: str,
     transcript_ref: str,
     token_estimate: int | None,
-) -> tuple[AgentSession, str | None]:
-    """Upsert on sessionId, returning (doc, old_transcript_ref).
+) -> tuple[AgentSession, list[str]]:
+    """Upsert on sessionId, returning (doc, old blob refs to GC).
 
     A resumed session re-fires the hook with a longer transcript: on a match we
     overwrite the capture, reset status/normalizedRef/expiresAt, and return the
-    previous transcriptRef so the caller can GC its blob. On first capture the
-    old ref is None. A DuplicateKeyError (E11000 race on the unique sessionId
-    index) falls through to the update path — the later SessionEnd, holding the
-    fuller transcript, wins."""
+    previous transcriptRef — plus the previous normalizedRef when one existed —
+    so the caller can GC their blobs. On first capture the list is empty. A
+    DuplicateKeyError (E11000 race on the unique sessionId index) falls through
+    to the update path — the later SessionEnd, holding the fuller transcript,
+    wins."""
     now = datetime.now(timezone.utc)
     for _ in range(2):
         existing = await AgentSession.find_one({"sessionId": session_id})
         if existing is not None:
-            old_ref = existing.transcriptRef
+            old_refs = [existing.transcriptRef]
+            if existing.normalizedRef:
+                old_refs.append(existing.normalizedRef)
             existing.orgId = org_id
             existing.repoId = repo_id
             existing.userId = user_id
@@ -152,11 +175,12 @@ async def upsert_agent_session(
             existing.transcriptRef = transcript_ref
             existing.normalizedRef = None  # fuller capture → re-normalize
             existing.tokenEstimate = token_estimate
+            existing.normalizedTokenEstimate = None
             existing.status = "stored"
             existing.expiresAt = now + EXPIRES_AFTER
             existing.updatedAt = now
             await existing.save()
-            return existing, old_ref
+            return existing, old_refs
 
         doc = AgentSession(
             orgId=org_id,
@@ -172,7 +196,7 @@ async def upsert_agent_session(
         )
         try:
             await doc.insert()
-            return doc, None
+            return doc, []
         except DuplicateKeyError:
             continue  # lost the insert race; retry as an update
 
@@ -180,9 +204,16 @@ async def upsert_agent_session(
     raise RuntimeError("agent-session upsert contention")
 
 
-async def enqueue_normalization(agent_session_id: str) -> None:
-    """Stub: hand a stored session off to the normalizer.
+async def enqueue_normalization(db: AsyncDatabase, agent_session_id: str) -> None:
+    """Hand a stored session off to the normalizer.
 
-    TODO(normalizer): replace with a real queue/worker dispatch. For now this
-    just records intent so the ingest path and its contract are complete."""
-    logger.info("normalization queued for agentSession %s (stub)", agent_session_id)
+    Runs in-process (FastAPI BackgroundTasks) for now; this stays the single
+    seam to swap in a real queue/worker later. Failures are logged and
+    swallowed — the doc stays "stored" so a future pass can retry."""
+    # Function-level import: normalizer imports this module at top level.
+    from app.claude_hook import normalizer
+
+    try:
+        await normalizer.normalize_session(db, agent_session_id)
+    except Exception:
+        logger.exception("normalization failed for agentSession %s", agent_session_id)

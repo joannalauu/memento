@@ -57,7 +57,8 @@ class AgentSession(Document):
     branch: str
     transcriptRef: str  # GridFS id or object-store key (raw JSONL)
     normalizedRef: str | None = None  # set by the normalizer (signal-only version)
-    tokenEstimate: int | None = None
+    tokenEstimate: int | None = None  # client-reported estimate for the raw transcript
+    normalizedTokenEstimate: int | None = None  # set by the normalizer
     status: Literal["stored", "normalized", "distilled", "expired"]
     prNumber: int | None = None  # set when matched to a PR
     expiresAt: datetime | None = (

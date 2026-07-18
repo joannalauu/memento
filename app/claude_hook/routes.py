@@ -83,7 +83,7 @@ async def ingest_agent_session(
     # Upload the new blob first so the doc never points at a nonexistent file.
     new_ref = await crud.upload_transcript(db, x_session_id, raw)
     try:
-        doc, old_ref = await crud.upsert_agent_session(
+        doc, old_refs = await crud.upsert_agent_session(
             org_id=principal.api_key.orgId,
             repo_id=repo.id,
             user_id=principal.api_key.userId,
@@ -97,9 +97,11 @@ async def ingest_agent_session(
         await crud.delete_transcript(db, new_ref)
         raise
 
-    # GC the superseded blob only after the doc write succeeds.
-    if old_ref and old_ref != new_ref:
-        await crud.delete_transcript(db, old_ref)
+    # GC superseded blobs (old transcript + old normalized version) only after
+    # the doc write succeeds.
+    for old_ref in old_refs:
+        if old_ref and old_ref != new_ref:
+            await crud.delete_transcript(db, old_ref)
 
-    background_tasks.add_task(crud.enqueue_normalization, str(doc.id))
+    background_tasks.add_task(crud.enqueue_normalization, db, str(doc.id))
     return AgentSessionIngestAccepted.model_validate(doc)
