@@ -4,8 +4,8 @@
  * active-org context to everything below. A signed-in user with no org is sent
  * to onboarding.
  */
-import { Navigate, NavLink, Outlet } from "react-router-dom"
-import { LogOut, Waypoints } from "lucide-react"
+import { Navigate, Outlet, useLocation, useNavigate } from "react-router-dom"
+import { Home, LogOut, Waypoints } from "lucide-react"
 
 import { logout, useMe, useMyOrgs, type User } from "@/lib/api"
 import { Button } from "@/components/ui/button"
@@ -28,7 +28,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { cn } from "@/lib/utils"
 import { FullPageError, FullPageSpinner } from "@/components/full-page-state"
 import { OrgProvider, useActiveOrg } from "./org-context"
 import { ThemeToggle } from "./ThemeToggle"
@@ -61,10 +60,7 @@ function ShellHeader({ me }: { me: User }) {
   return (
     <header className="flex items-center justify-between gap-4 border-b px-4 py-2">
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2">
-          <Waypoints className="text-primary size-5" />
-          <span className="text-sm font-semibold">Memento</span>
-        </div>
+        <ContextualNavButton homePath={homePath} />
 
         {orgs.length > 1 ? (
           <Select value={org.id} onValueChange={setOrgId}>
@@ -83,10 +79,6 @@ function ShellHeader({ me }: { me: User }) {
           <span className="text-muted-foreground text-sm">{org.name}</span>
         )}
 
-        <nav className="ml-2 flex items-center gap-1">
-          <NavItem to={homePath}>Dashboard</NavItem>
-          <NavItem to="/graph">Graph</NavItem>
-        </nav>
       </div>
 
       <div className="flex items-center gap-1">
@@ -97,21 +89,25 @@ function ShellHeader({ me }: { me: User }) {
   )
 }
 
-function NavItem({ to, children }: { to: string; children: React.ReactNode }) {
+/**
+ * Single top-left toggle between the dashboard and the graph: shows "Memory
+ * Graph" on the home pages and "Home" while on the graph, always in the same
+ * spot. Home routes to admin or member home per the caller's role.
+ */
+function ContextualNavButton({ homePath }: { homePath: string }) {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const onGraph = location.pathname === "/graph"
+
   return (
-    <NavLink
-      to={to}
-      className={({ isActive }) =>
-        cn(
-          "rounded-md px-2.5 py-1 text-sm transition-colors",
-          isActive
-            ? "bg-muted text-foreground font-medium"
-            : "text-muted-foreground hover:text-foreground",
-        )
-      }
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => navigate(onGraph ? homePath : "/graph")}
     >
-      {children}
-    </NavLink>
+      {onGraph ? <Home /> : <Waypoints />}
+      {onGraph ? "Home" : "Memory Graph"}
+    </Button>
   )
 }
 
