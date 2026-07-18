@@ -4,7 +4,16 @@ import tempfile
 from pathlib import Path
 
 from beanie import PydanticObjectId
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    status,
+)
 
 from backboard.exceptions import BackboardNotFoundError
 
@@ -17,12 +26,30 @@ from app.file_upload.crud import (
     list_document_index_entries,
     update_document_status,
 )
+from app.file_upload.enrichment import run_document_enrichment
 from app.file_upload.models import DocumentIndexEntry
 from app.file_upload.schemas import DocumentRead
+from app.github.client import GitHubApp, get_github
 from app.orgs.crud import get_org
-from app.orgs.models import Org, User
+from app.orgs.models import Org, Repo, User
 
 router = APIRouter()
+
+# Best-effort text ceiling read from an uploaded file for anchor enrichment; the
+# extractor caps again at MAX_DOC_CHARS. Binary/unreadable files decode to noise
+# and enrichment no-ops on them — the doc is in RAG regardless.
+_MAX_DOC_TEXT_BYTES = 400_000
+
+
+def _read_document_text(path: str) -> str:
+    """Best-effort UTF-8 text of an uploaded file, for anchor enrichment. Binary
+    or unreadable files yield "" (enrichment then no-ops)."""
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read(_MAX_DOC_TEXT_BYTES)
+    except OSError:
+        return ""
+    return raw.decode("utf-8", errors="ignore")
 
 
 async def _sync_document(
@@ -41,12 +68,21 @@ async def _sync_document(
 )
 async def upload_org_document_endpoint(
     org_id: PydanticObjectId,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    repo_id: PydanticObjectId | None = Form(None),
     user: User = Depends(get_current_user),
     backboard: Backboard = Depends(get_backboard),
+    github: GitHubApp = Depends(get_github),
 ) -> DocumentRead:
     """Upload a document to the org's Backboard assistant and record it in the
-    org's document index. Only a member of the org may upload."""
+    org's document index. Only a member of the org may upload.
+
+    Pass ``repo_id`` to scope a legacy doc to a repo: after upload, a background
+    anchor-enrichment job extracts the doc's decision-like claims, grounds them
+    against the repo tree, and writes each as a ``legacy_doc`` memory so the
+    knowledge is reachable through anchor-based search (see enrichment.py). The
+    full doc always lands in RAG for narrative answers, repo or not."""
     org: Org = await get_org(org_id)
     if org is None:
         raise HTTPException(
@@ -59,14 +95,30 @@ async def upload_org_document_endpoint(
             detail="Not a member of this org",
         )
 
+    # Optional repo scope for anchor enrichment. Resolve within the org so one
+    # org can't tag a doc against another's repo.
+    repo: Repo | None = None
+    if repo_id is not None:
+        repo = await Repo.find_one(Repo.id == repo_id, Repo.orgId == org_id)
+        if repo is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Repo not found in this org",
+            )
+
     # The Backboard SDK uploads from a path, so spool the incoming stream to a
     # temp file first. Preserve the original suffix so Backboard can infer the
     # document type. Clean up the temp file regardless of outcome.
     suffix = Path(file.filename or "").suffix
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+    # Capture the text now (only when enriching): the temp file is gone by the
+    # time the background task runs, and Backboard exposes no way to read it back.
+    doc_text = ""
     try:
         with os.fdopen(tmp_fd, "wb") as tmp:
             shutil.copyfileobj(file.file, tmp)
+        if repo is not None:
+            doc_text = _read_document_text(tmp_path)
         bb_document = await backboard.upload_document_to_assistant(
             org.bbAssistantId, tmp_path
         )
@@ -76,12 +128,24 @@ async def upload_org_document_endpoint(
         except OSError:
             pass
 
-    return await create_document_index_entry(
+    entry = await create_document_index_entry(
         org_id=org_id,
+        repo_id=repo.id if repo is not None else None,
         bb_document_id=str(bb_document.document_id),
         filename=file.filename or bb_document.filename,
         status=bb_document.status,
     )
+    if repo is not None:
+        background_tasks.add_task(
+            run_document_enrichment,
+            entry,
+            doc_text=doc_text,
+            org=org,
+            repo=repo,
+            bb=backboard,
+            github=github,
+        )
+    return entry
 
 
 @router.get("/{org_id}", response_model=list[DocumentRead])
