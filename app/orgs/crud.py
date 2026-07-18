@@ -43,6 +43,12 @@ async def get_org(org_id: PydanticObjectId) -> Org | None:
     return await Org.get(org_id)
 
 
+async def list_orgs_for_user(user_id: PydanticObjectId) -> list[Org]:
+    """List every org the user is a member of, newest first. Backed by the
+    `members.userId` multikey index."""
+    return await Org.find(Org.members.userId == user_id).sort(-Org.createdAt).to_list()
+
+
 async def update_org(org: Org, payload: OrgUpdate) -> Org:
     """Apply a partial update to an org. Only fields explicitly set on the
     payload are touched; renaming re-derives the slug."""

@@ -13,6 +13,7 @@ from app.orgs.crud import (
     get_org,
     get_org_invite,
     list_org_members,
+    list_orgs_for_user,
     list_repos_for_org,
     update_org,
 )
@@ -45,6 +46,14 @@ async def create_org_endpoint(
         bb_assistant_id=str(assistant.assistant_id),
         creator_id=user.id,
     )
+
+
+@router.get("/me", response_model=list[OrgRead])
+async def list_my_orgs_endpoint(
+    user: User = Depends(get_current_user),
+) -> list[OrgRead]:
+    """List every org the authenticated user is a member of, newest first."""
+    return await list_orgs_for_user(user.id)
 
 
 @router.get("/{org_id}", response_model=OrgRead)
