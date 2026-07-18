@@ -1,0 +1,12 @@
+# gitleaks configuration
+# Keep all of gitleaks' default rules...
+[extend]
+useDefault = true
+
+# ...but ignore the claude-hook redaction test fixtures. These are
+# intentionally-fake secrets used to verify that redact() masks them.
+[allowlist]
+description = "Fake secrets in redaction test fixtures"
+paths = [
+  '''packages/claude-hook/test/redact\.test\.ts''',
+]

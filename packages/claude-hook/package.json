@@ -1,0 +1,34 @@
+{
+  "name": "@memento/hook",
+  "version": "0.1.0",
+  "description": "Claude Code SessionEnd hook that captures agent transcripts and ships them to Memento — redacted, gzipped, fail-silent.",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "hook",
+    "memento",
+    "agent-sessions"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "memento-hook": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
+    "clean": "rm -rf dist dist-test"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}
