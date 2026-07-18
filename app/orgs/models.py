@@ -99,6 +99,14 @@ class Repo(Document):
                 name="org_github_repo_unique",
                 unique=True,
             ),
+            # ingest resolves a repo from the hook's X-Git-Remote header by
+            # (orgId, owner, name) on every SessionEnd; githubRepoId stays the
+            # canonical identity, so this stays non-unique (renames can
+            # transiently alias owner/name).
+            IndexModel(
+                [("orgId", 1), ("owner", 1), ("name", 1)],
+                name="org_owner_name",
+            ),
         ]
 
 
