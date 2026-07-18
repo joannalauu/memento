@@ -9,6 +9,8 @@ authored content into the local `memoryIndex` collection (see models.py) in
 the same call.
 """
 
+import asyncio
+import logging
 import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
@@ -35,7 +37,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.backboard.models import Anchors, MemoryConfidence, MemoryIndex, MemorySource
 
+logger = logging.getLogger(__name__)
+
 Uuid = str | uuid.UUID
+
+# Async memory writes can return an operation id to poll to completion. Terminal
+# states are matched case-insensitively (the API is inconsistent about casing).
+_MEMORY_OP_POLL_INTERVAL = 0.5  # seconds between op-status polls
+_MEMORY_OP_POLL_TRIES = 20  # ~10s ceiling before giving up and proceeding
+_MEMORY_OP_DONE = {"COMPLETED", "SUCCESS", "SUCCEEDED", "DONE"}
+_MEMORY_OP_FAILED = {"FAILED", "ERROR", "CANCELLED", "CANCELED"}
 
 
 class BackboardSettings(BaseSettings):
@@ -342,6 +353,31 @@ class Backboard:
 
     # ─── Memories ─────────────────────────────────────────────────────────────
 
+    async def _await_memory_operation(self, operation_id: str | None) -> None:
+        """Poll a memory operation to a terminal state.
+
+        No-op when there's no operation id (synchronous writes). Raises
+        ``RuntimeError`` on a FAILED op so the caller treats the write as not
+        durable; a poll that never reaches a terminal state within the ceiling
+        logs a warning and proceeds rather than blocking the write path."""
+        if not operation_id:
+            return
+        for _ in range(_MEMORY_OP_POLL_TRIES):
+            status = await self._client.get_memory_operation_status(operation_id)
+            state = (status.status or "").upper()
+            if state in _MEMORY_OP_DONE:
+                return
+            if state in _MEMORY_OP_FAILED:
+                raise RuntimeError(
+                    f"Backboard memory operation {operation_id} failed: {status.status}"
+                )
+            await asyncio.sleep(_MEMORY_OP_POLL_INTERVAL)
+        logger.warning(
+            "memory operation %s did not complete after %d polls; proceeding",
+            operation_id,
+            _MEMORY_OP_POLL_TRIES,
+        )
+
     async def add_memory(
         self,
         *,
@@ -385,6 +421,12 @@ class Backboard:
         memory_id = result.get("memory_id")
         if not memory_id:
             raise RuntimeError(f"Backboard add_memory returned no memory_id: {result}")
+        # Async writes surface an operation id; wait for it to reach a terminal
+        # state before mirroring, so callers (e.g. supersession) never reference
+        # a memory the backend hasn't durably committed.
+        await self._await_memory_operation(
+            result.get("memory_operation_id") or result.get("operation_id")
+        )
         now = datetime.now(timezone.utc)
         index = MemoryIndex(
             orgId=org_id,

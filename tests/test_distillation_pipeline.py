@@ -8,8 +8,13 @@ from app.claude_hook.models import AgentSession
 from app.claude_hook.normalizer import NormalizedEntry, render_jsonl
 from app.context_engine.schemas import StalenessVerdict
 from app.distillation import matching, pipeline
-from app.distillation.schemas import DistillationOutput, DistilledDecision
-from app.distillation.schemas import DecisionAnchors, StaleMemoryFlag
+from app.distillation.schemas import (
+    DecisionAnchors,
+    DistillationOutput,
+    DistillationResult,
+    DistilledDecision,
+    StaleMemoryFlag,
+)
 from app.github.client import GitHubError
 from app.job_queue.models import PipelineJob
 from app.orgs.models import Feature, Org, Repo
@@ -178,9 +183,12 @@ def env(monkeypatch):
     gh = AsyncMock()
     gh.rest.return_value = resp
 
-    # Staleness enrichment has its own tests; stub it out of the gap path here.
+    # Staleness enrichment and the T3.3 write phase each have their own test
+    # files; stub them so these orchestration tests stay focused.
     staleness_mock = AsyncMock(return_value=[])
     monkeypatch.setattr(pipeline, "_staleness_flags_for_gap", staleness_mock)
+    write_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(pipeline, "write_distillation", write_mock)
 
     return SimpleNamespaceLike(
         sessions=sessions,
@@ -189,6 +197,7 @@ def env(monkeypatch):
         distilled_sessions=distilled_sessions,
         distill_mock=distill_mock,
         staleness_mock=staleness_mock,
+        write_mock=write_mock,
         gh=gh,
         bb=AsyncMock(),
         db=object(),
@@ -211,20 +220,84 @@ async def test_success_persists_result_and_flips_sessions(env):
     assert job.status == "done"
     assert job.outcome == "distilled"
     assert job.finishedAt is not None
-    assert env.saved_jobs == [job]
+    # saved twice: the distill-phase checkpoint, then the write-phase finish
+    assert env.saved_jobs and all(j is job for j in env.saved_jobs)
     assert job.result is not None
     assert job.result["matchMode"] == "branch"
     assert job.result["sessionIds"] == [str(env.sessions[0].id)]
     assert job.result["commitSha"] == job.headSha  # baseline for T3.3 staleness
     assert len(job.result["decisions"]) == 1
     assert env.stamped == env.sessions
-    assert env.distilled_sessions == env.sessions
+    # write phase ran, then sessions flipped distilled via their ids
+    env.write_mock.assert_awaited_once()
+    assert env.distilled_sessions == [s.id for s in env.sessions]
 
     # the distillation call saw the fetched PR body and the org's features
     _, kwargs = env.distill_mock.call_args
     assert kwargs["pr_description"] == "Adds a limiter."
     assert kwargs["feature_names"] == ["billing"]
     assert kwargs["assistant_id"] == "asst-1"
+
+
+async def test_checkpoint_saved_before_write_phase(env, monkeypatch):
+    # the result must be persisted before the write phase runs, so a write
+    # failure leaves a resumable checkpoint rather than losing the distillation
+    seen = {}
+
+    async def capture_write(job, **kwargs):
+        seen["result_at_write"] = job.result
+
+    monkeypatch.setattr(pipeline, "write_distillation", capture_write)
+    job = make_job()
+    await run(env, job)
+
+    assert seen["result_at_write"] is not None
+    assert seen["result_at_write"]["commitSha"] == job.headSha
+
+
+async def test_write_failure_leaves_result_intact_sessions_unflipped(env, monkeypatch):
+    monkeypatch.setattr(
+        pipeline, "write_distillation", AsyncMock(side_effect=RuntimeError("bb down"))
+    )
+    job = make_job()
+    with pytest.raises(RuntimeError, match="bb down"):
+        await run(env, job)
+
+    # checkpoint survived (resume will retry the write); job not done, sessions
+    # not yet terminal
+    assert job.result is not None
+    assert job.status != "done"
+    assert env.distilled_sessions == []
+
+
+async def test_resume_skips_match_and_distill(env, monkeypatch):
+    # a job that already carries a result resumes straight into the write phase
+    result = DistillationResult(
+        decisions=[
+            DistilledDecision(
+                content="x",
+                anchors=DecisionAnchors(files=["app/limits.py"]),
+                feature="rate-limiting",
+                confidence="high",
+            )
+        ],
+        sessionIds=[env.sessions[0].id],
+        matchMode="branch",
+        commitSha="abc123",
+        distilledAt=datetime.now(timezone.utc),
+    )
+    match_mock = AsyncMock()
+    monkeypatch.setattr(matching, "match_sessions", match_mock)
+    job = make_job()
+    job.result = result.model_dump(mode="json")
+    await run(env, job)
+
+    match_mock.assert_not_called()
+    env.distill_mock.assert_not_called()
+    env.write_mock.assert_awaited_once()
+    assert job.status == "done"
+    assert job.outcome == "distilled"
+    assert env.distilled_sessions == [env.sessions[0].id]
 
 
 async def test_missing_org_is_terminal(env, monkeypatch):

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 import pytest
 from beanie import PydanticObjectId
 
-from backboard.models import ChatMessagesResponse
+from backboard.models import ChatMessagesResponse, MemoryOperationStatus
 
 from app.backboard.client import Backboard, BackboardSettings, _extract_transcript
 from app.backboard.models import MemoryIndex
@@ -119,6 +119,71 @@ async def test_add_memory_supersedes_skips_missing_id(bb, captured_insert, monke
     )
 
     save_mock.assert_not_awaited()
+
+
+def _op_status(state):
+    return MemoryOperationStatus(operation_id="op-1", status=state)
+
+
+async def test_add_memory_polls_operation_before_mirror(
+    bb, captured_insert, monkeypatch
+):
+    bb._client.add_memory.return_value = {
+        "success": True,
+        "memory_id": "mem-async",
+        "memory_operation_id": "op-1",
+    }
+    bb._client.get_memory_operation_status.side_effect = [
+        _op_status("PENDING"),
+        _op_status("COMPLETED"),
+    ]
+    monkeypatch.setattr("app.backboard.client.asyncio.sleep", AsyncMock())
+
+    index = await bb.add_memory(
+        assistant_id="assistant-1",
+        org_id=PydanticObjectId(),
+        repo_id=PydanticObjectId(),
+        repo="acme/api-server",
+        content="async write",
+    )
+
+    assert bb._client.get_memory_operation_status.await_count == 2
+    assert captured_insert == [index]  # mirror written only after completion
+
+
+async def test_add_memory_operation_failure_raises_and_skips_mirror(
+    bb, captured_insert
+):
+    bb._client.add_memory.return_value = {
+        "success": True,
+        "memory_id": "mem-async",
+        "operation_id": "op-1",
+    }
+    bb._client.get_memory_operation_status.return_value = _op_status("FAILED")
+
+    with pytest.raises(RuntimeError, match="operation op-1 failed"):
+        await bb.add_memory(
+            assistant_id="assistant-1",
+            org_id=PydanticObjectId(),
+            repo_id=PydanticObjectId(),
+            repo="acme/api-server",
+            content="async write",
+        )
+    assert captured_insert == []
+
+
+async def test_add_memory_without_operation_id_skips_polling(bb, captured_insert):
+    bb._client.add_memory.return_value = {"success": True, "memory_id": "mem-sync"}
+
+    await bb.add_memory(
+        assistant_id="assistant-1",
+        org_id=PydanticObjectId(),
+        repo_id=PydanticObjectId(),
+        repo="acme/api-server",
+        content="sync write",
+    )
+
+    bb._client.get_memory_operation_status.assert_not_awaited()
 
 
 async def test_add_memory_without_memory_id_raises_and_skips_index(bb, captured_insert):

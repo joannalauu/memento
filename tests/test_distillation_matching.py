@@ -164,7 +164,7 @@ async def test_mark_distilled(monkeypatch):
     )
     s1 = make_session()
 
-    await matching.mark_distilled([s1])
+    await matching.mark_distilled([s1.id])  # now takes ids, not docs
 
     (filter_dict, update), _ = collection.update_many.call_args
     assert filter_dict == {"_id": {"$in": [s1.id]}}

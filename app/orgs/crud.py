@@ -3,8 +3,9 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from beanie import PydanticObjectId
+from pymongo.errors import DuplicateKeyError
 
-from app.orgs.models import Org, OrgInvite, OrgMember, Repo, User
+from app.orgs.models import Feature, Org, OrgInvite, OrgMember, Repo, User
 from app.orgs.schemas import OrgMemberRead, OrgUpdate, UserPublic
 
 # Org invites remain valid for 3 days from creation.
@@ -15,6 +16,38 @@ def slugify(name: str) -> str:
     """Derive a URL-safe slug from a display name: lowercase, non-alphanumeric
     runs collapsed to single hyphens, leading/trailing hyphens stripped."""
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+async def ensure_features(
+    org_id: PydanticObjectId, names: set[str], *, pr_number: int | None = None
+) -> None:
+    """Register any feature labels not already known to the org.
+
+    Distillation coins feature slugs (or reuses existing ones); this is the
+    first writer of the `features` collection, called before memories reference
+    them so every graph node's feature resolves to a real Feature. Names are
+    slugged for consistency with how they arrive; a concurrent insert of the
+    same (orgId, name) trips the unique index and is tolerated — already
+    registered is success, not error."""
+    slugs = {slug for name in names if (slug := slugify(name))}
+    if not slugs:
+        return
+    existing = {
+        f.name
+        for f in await Feature.find(
+            {"orgId": org_id, "name": {"$in": list(slugs)}}
+        ).to_list()
+    }
+    description = (
+        f"Coined by distillation from PR #{pr_number}"
+        if pr_number is not None
+        else "Coined by distillation"
+    )
+    for slug in slugs - existing:
+        try:
+            await Feature(orgId=org_id, name=slug, description=description).insert()
+        except DuplicateKeyError:
+            pass  # a concurrent job registered it first
 
 
 async def create_org(

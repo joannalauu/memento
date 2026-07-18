@@ -7,6 +7,7 @@ banked agentSessions by repo + head branch, and turns transcripts + PR context
 
 from app.distillation.distill import distill
 from app.distillation.matching import match_sessions
+from app.distillation.memory_write import write_distillation
 from app.distillation.pipeline import run_pipeline_job
 from app.distillation.schemas import (
     DistillationOutput,
@@ -22,6 +23,7 @@ __all__ = [
     "distill",
     "match_sessions",
     "run_pipeline_job",
+    "write_distillation",
     "worker_enabled",
     "worker_loop",
 ]

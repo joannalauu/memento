@@ -35,6 +35,7 @@ from app.context_engine import (
 )
 from app.distillation import matching
 from app.distillation.distill import distill
+from app.distillation.memory_write import write_distillation
 from app.distillation.schemas import DistillationResult, StaleMemoryFlag
 from app.gap_chat.service import open_gap_chat
 from app.github.client import GitHubApp, GitHubError
@@ -273,6 +274,34 @@ async def run_pipeline_job(
     if not repo.active:
         raise TerminalJobError(f"repo {repo.id} is inactive")
 
+    # job.result is the checkpoint between the two phases: absent → run the
+    # expensive distill phase; present → a prior attempt already distilled and
+    # only the writes need retrying, so resume straight into the write phase.
+    if job.result is None:
+        produced = await _distill_phase(job, db=db, bb=bb, gh=gh, org=org, repo=repo)
+        if not produced:
+            return  # coverage gap / no readable transcript already finished the job
+    else:
+        logger.info(
+            "resuming write phase for job pr=%s repo=%s", job.prNumber, job.repoId
+        )
+
+    await _write_phase(job, bb=bb, org=org, repo=repo)
+
+
+async def _distill_phase(
+    job: PipelineJob,
+    *,
+    db: AsyncDatabase,
+    bb: Backboard,
+    gh: GitHubApp,
+    org: Org,
+    repo: Repo,
+) -> bool:
+    """Fresh run: match sessions → gather diff/context/transcripts → one
+    distillation call → checkpoint the result onto ``job.result``. Returns True
+    when a result was checkpointed; False when the job was already finished as a
+    coverage gap (the caller then stops)."""
     # ── match: the branch name joins the two timelines ──────────────────────
     sessions, match_mode = await matching.match_sessions(job)
     if not sessions or match_mode is None:
@@ -290,7 +319,7 @@ async def run_pipeline_job(
         if flags:
             detail += f", {len(flags)} prior memory(ies) on changed files now stale/gap"
         await _finish_no_sessions(job, detail, flags)
-        return
+        return False
     await matching.stamp_matched(sessions, job.prNumber)
 
     # ── gather: diff, anchors, prior context, transcripts, features ─────────
@@ -337,7 +366,7 @@ async def run_pipeline_job(
             f"matched {len(sessions)} session(s) but no normalized transcript "
             "was readable",
         )
-        return
+        return False
 
     feature_names = sorted(
         {f.name for f in await Feature.find({"orgId": job.orgId}).to_list()}
@@ -360,24 +389,18 @@ async def run_pipeline_job(
     if output is None:
         raise TransientJobError("distillation response was not a JSON object")
 
-    # ── persist for T3.3, then flip sessions to their terminal status ───────
-    now = datetime.now(timezone.utc)
+    # ── checkpoint: persist the result so the write phase can retry alone ────
     result = DistillationResult(
         decisions=output.decisions,
         conflicts=output.conflicts,
         sessionIds=[s.id for s in readable if s.id is not None],
         droppedSessionIds=[s.id for s in dropped if s.id is not None],
         matchMode=match_mode,
-        commitSha=job.headSha,  # T3.3 stamps this → future staleness baseline
-        distilledAt=now,
+        commitSha=job.headSha,  # stamped onto every written memory (staleness baseline)
+        distilledAt=datetime.now(timezone.utc),
     )
     job.result = result.model_dump(mode="json")
-    job.outcome = "distilled"
-    job.status = "done"
-    job.error = None
-    job.finishedAt = now
-    await job.save()
-    await matching.mark_distilled(sessions)
+    await job.save()  # status stays "running" — writes haven't happened yet
     logger.info(
         "distilled pr=%s repo=%s: %d decision(s), %d conflict(s) from %d session(s)",
         job.prNumber,
@@ -385,4 +408,28 @@ async def run_pipeline_job(
         len(output.decisions),
         len(output.conflicts),
         len(readable),
+    )
+    return True
+
+
+async def _write_phase(
+    job: PipelineJob, *, bb: Backboard, org: Org, repo: Repo
+) -> None:
+    """Commit the checkpointed decisions to both stores (T3.3), then mark the
+    job and its sessions terminal. Write failures propagate so the worker
+    requeues; the per-decision checkpoints inside write_distillation make the
+    retry resume rather than duplicate."""
+    await write_distillation(job, bb=bb, org=org, repo=repo)
+    result = DistillationResult.model_validate(job.result)
+    job.outcome = "distilled"
+    job.status = "done"
+    job.error = None
+    job.finishedAt = datetime.now(timezone.utc)
+    await job.save()
+    await matching.mark_distilled(result.sessionIds)
+    logger.info(
+        "wrote %d memory(ies) for pr=%s repo=%s",
+        len(result.decisions),
+        job.prNumber,
+        job.repoId,
     )

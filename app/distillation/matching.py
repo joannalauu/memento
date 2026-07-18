@@ -17,6 +17,8 @@ claimed by a *different* PR stay excluded.
 
 from datetime import datetime, timedelta, timezone
 
+from beanie import PydanticObjectId
+
 from app.claude_hook.models import AgentSession
 from app.distillation.schemas import MatchMode
 from app.job_queue.models import PipelineJob
@@ -100,9 +102,11 @@ async def stamp_matched(sessions: list[AgentSession], pr_number: int) -> None:
     )
 
 
-async def mark_distilled(sessions: list[AgentSession]) -> None:
-    """Flip successfully distilled sessions to their terminal status."""
-    ids = [s.id for s in sessions if s.id is not None]
+async def mark_distilled(session_ids: list[PydanticObjectId]) -> None:
+    """Flip successfully distilled sessions to their terminal status. Takes ids
+    (not docs) so the write-phase resume path — which only has the ids stored in
+    the persisted result — can call it without reloading the sessions."""
+    ids = [i for i in session_ids if i is not None]
     if not ids:
         return
     await AgentSession.get_pymongo_collection().update_many(

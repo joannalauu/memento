@@ -33,6 +33,9 @@ class DistilledDecision(BaseModel):
     anchors: DecisionAnchors = Field(default_factory=DecisionAnchors)
     feature: str  # slug; matched to the org's Features or newly coined
     confidence: DecisionConfidence
+    # Set by T3.3 after this decision is written to Backboard; its presence marks
+    # the decision as already committed so a resumed write skips it (no dup).
+    bbMemoryId: str | None = None
 
 
 class DistillationOutput(BaseModel):
