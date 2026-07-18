@@ -1,10 +1,14 @@
 import re
-from datetime import datetime, timezone
+import secrets
+from datetime import datetime, timedelta, timezone
 
 from beanie import PydanticObjectId
 
-from app.orgs.models import Org, OrgMember, Repo
+from app.orgs.models import Org, OrgInvite, OrgMember, Repo
 from app.orgs.schemas import OrgUpdate
+
+# Org invites remain valid for 3 days from creation.
+ORG_INVITE_EXPIRY = timedelta(days=3)
 
 
 def slugify(name: str) -> str:
@@ -60,3 +64,32 @@ async def delete_org(org: Org) -> None:
 async def list_repos_for_org(org_id: PydanticObjectId) -> list[Repo]:
     """List an org's repos, newest first."""
     return await Repo.find(Repo.orgId == org_id).sort(-Repo.createdAt).to_list()
+
+
+async def create_org_invite(*, org_id: PydanticObjectId, email: str) -> OrgInvite:
+    """Create an org invite valid for ORG_INVITE_EXPIRY, with a unique token."""
+    invite = OrgInvite(
+        orgId=org_id,
+        email=email,
+        token=secrets.token_urlsafe(32),
+        expiresAt=datetime.now(timezone.utc) + ORG_INVITE_EXPIRY,
+    )
+    await invite.insert()
+    return invite
+
+
+async def get_org_invite(org_id: PydanticObjectId, token: str) -> OrgInvite | None:
+    """Retrieve an org's invite by its token."""
+    return await OrgInvite.find_one(OrgInvite.orgId == org_id, OrgInvite.token == token)
+
+
+async def accept_org_invite(
+    *, org: Org, invite: OrgInvite, user_id: PydanticObjectId
+) -> Org:
+    """Add the user to the org as a member and mark the invite accepted."""
+    now = datetime.now(timezone.utc)
+    org.members.append(OrgMember(userId=user_id, role="member", joinedAt=now))
+    invite.acceptedAt = now
+    await org.save()
+    await invite.save()
+    return org

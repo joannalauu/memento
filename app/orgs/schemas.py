@@ -37,3 +37,18 @@ class RepoRead(BaseModel):
     name: str
     defaultBranch: str
     createdAt: datetime
+
+
+class OrgInviteCreate(BaseModel):
+    email: str
+
+
+class OrgInviteRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: PydanticObjectId
+    orgId: PydanticObjectId
+    email: str
+    token: str
+    expiresAt: datetime
+    acceptedAt: datetime | None = None
