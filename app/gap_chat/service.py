@@ -113,7 +113,7 @@ async def open_gap_chat(
     thread_id: str | None = None
     try:
         thread = await bb.create_thread(org.bbAssistantId)
-        thread_id = str(thread.id)
+        thread_id = str(thread.thread_id)
     except Exception:  # noqa: BLE001 — the thread is convenience, not required
         logger.warning(
             "could not open Backboard thread for gap chat on %s", memory.bbMemoryId
@@ -301,7 +301,7 @@ async def ensure_thread(chat: GapChat, *, org: Org, bb: Backboard) -> str | None
     except Exception:  # noqa: BLE001 — surfaced to the caller as "no thread"
         logger.warning("could not create Backboard thread for gap chat %s", chat.id)
         return None
-    chat.bbThreadId = str(thread.id)
+    chat.bbThreadId = str(thread.thread_id)
     await chat.save()
     return chat.bbThreadId
 
