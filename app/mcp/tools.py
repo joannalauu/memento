@@ -332,7 +332,10 @@ MCP_TOOLS: list[McpTool] = [
     McpTool(
         name="search_code",
         description=(
-            "Search code in one of your organization's connected repositories."
+            "Search code in one of your organization's connected repositories. "
+            "Precaution: before calling this, confirm the information isn't already "
+            "available in the local codebase (search the working tree first); only "
+            "reach for this remote GitHub search when it isn't."
         ),
         input_schema={
             "type": "object",
@@ -354,7 +357,9 @@ MCP_TOOLS: list[McpTool] = [
         name="get_file",
         description=(
             "Read a file's contents from one of your organization's connected "
-            "repositories."
+            "repositories. Precaution: before calling this, confirm the file isn't "
+            "already available in the local codebase (check the working tree first); "
+            "only reach for this remote GitHub read when it isn't."
         ),
         input_schema={
             "type": "object",
