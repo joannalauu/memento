@@ -350,18 +350,24 @@ async def run_document_enrichment(
         logger.exception("enrichment failed for document %s", entry.id)
         await set_document_enrichment_status(entry.id, "failed")
         return
-    gaps = 0
+
+    # Surface the extracted decisions immediately: the memories are already
+    # written, so record the count and flip the phase to "done" NOW, before the
+    # slower, best-effort gap-detection pass. Gap detection makes one LLM judge
+    # call per anchored memory, so gating the decision count on it would leave the
+    # UI showing "Analyzing" / zero decisions for minutes even though the
+    # decisions exist. Gaps are augmentation and update separately below.
+    await set_document_enrichment_status(
+        entry.id, "done", decisions_written=len(written), gaps_opened=0
+    )
     try:
         gaps = await detect_and_open_gaps(
             written, org=org, repo=repo, bb=bb, github=github
         )
     except Exception:  # noqa: BLE001 — gap detection is best-effort augmentation
         logger.exception("gap detection failed for document %s", entry.id)
-    finally:
-        # Enrichment itself succeeded, so the analysis phase is over regardless of
-        # whether gap detection turned anything up (or errored) — mark it done,
-        # recording the outcome, so any client waiting on this phase (the
-        # gap-review spinner) can stop and report what was extracted.
-        await set_document_enrichment_status(
-            entry.id, "done", decisions_written=len(written), gaps_opened=gaps
-        )
+        return
+    # Only re-touch the entry if gap detection actually opened something, so the
+    # common (zero-gap) path costs no extra write.
+    if gaps:
+        await set_document_enrichment_status(entry.id, "done", gaps_opened=gaps)
