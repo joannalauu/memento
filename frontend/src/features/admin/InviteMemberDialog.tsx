@@ -89,8 +89,8 @@ export function InviteMemberDialog({ orgId }: { orgId: string }) {
                 We emailed {email} an invite link. You can also share it directly.
               </DialogDescription>
             </DialogHeader>
-            <div className="flex items-center gap-2">
-              <code className="bg-muted text-foreground min-w-0 flex-1 truncate rounded-md border px-3 py-2 font-mono text-xs">
+            <div className="flex min-w-0 items-center gap-2">
+              <code className="bg-muted text-foreground min-w-0 flex-1 overflow-x-auto rounded-md border px-3 py-2 font-mono text-xs whitespace-nowrap">
                 {link}
               </code>
               <Button
