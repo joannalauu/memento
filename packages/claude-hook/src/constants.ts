@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 /** npm package name — also the marker used to detect our own hook entry. */
-export const PACKAGE_NAME = "@memento/hook";
+export const PACKAGE_NAME = "@memento-ai/hook";
 
 /** Command written into settings.json. `-y` avoids the npx install prompt. */
 export const HOOK_COMMAND = `npx -y ${PACKAGE_NAME} run`;

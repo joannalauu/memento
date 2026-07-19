@@ -1,4 +1,4 @@
-# @memento/hook
+# @memento-ai/hook
 
 A [Claude Code](https://code.claude.com) **SessionEnd** hook that captures your
 agent transcript and ships it to Memento — redacted, gzipped, and **fail-silent**.
@@ -8,7 +8,7 @@ exits `0` immediately.
 ## Install
 
 ```bash
-npx @memento/hook install --api-key <your-key>
+npx @memento-ai/hook install --api-key <your-key>
 ```
 
 This does two things:
@@ -20,7 +20,7 @@ This does two things:
    {
      "hooks": {
        "SessionEnd": [
-         { "hooks": [{ "type": "command", "command": "npx -y @memento/hook run", "timeout": 15 }] }
+         { "hooks": [{ "type": "command", "command": "npx -y @memento-ai/hook run", "timeout": 15 }] }
        ]
      }
    }
@@ -49,8 +49,8 @@ adding a duplicate.
 ## Uninstall
 
 ```bash
-npx @memento/hook uninstall          # remove the hook from .claude/settings.json
-npx @memento/hook uninstall --purge  # also delete the saved API key
+npx @memento-ai/hook uninstall          # remove the hook from .claude/settings.json
+npx @memento-ai/hook uninstall --purge  # also delete the saved API key
 ```
 
 Only Memento's own hook entry is removed — other hooks and settings are left untouched.

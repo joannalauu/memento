@@ -39,7 +39,7 @@ async def ingest_agent_session(
     principal: ApiKeyPrincipal = Depends(get_api_key_principal),
     db: AsyncDatabase = Depends(get_client),
 ) -> AgentSessionIngestAccepted:
-    """Ingest a Claude Code session transcript from the @memento/hook client.
+    """Ingest a Claude Code session transcript from the @memento-ai/hook client.
 
     Auth is by API key (Bearer). The repo is resolved from X-Git-Remote within
     the key's org. The gzipped JSONL body is decompressed and stored in GridFS,

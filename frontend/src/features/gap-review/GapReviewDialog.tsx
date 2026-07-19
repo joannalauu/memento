@@ -19,6 +19,7 @@ import {
   queryKeys,
   useAnswerGapChat,
   useAnswerGapChatAudio,
+  useDocuments,
   useGapChats,
   type GapChat,
   type ObjectId,
@@ -37,8 +38,14 @@ import {
 } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import { useAudioRecorder } from "./useAudioRecorder"
+import { useUploadSignal } from "./upload-signal"
 
 const REVIEW_POLL_MS = 5000
+// After an upload, hold the processing spinner this long before giving up on
+// questions appearing (a hard cap so it can never hang), and stop earlier once
+// the docs finish indexing and this much has elapsed with nothing to ask.
+const MAX_PROCESSING_MS = 120_000
+const SETTLE_MS = 45_000
 
 /** The bare claim, prefix-stripped and clipped for a list row. */
 function shortLabel(content: string): string {
@@ -46,13 +53,49 @@ function shortLabel(content: string): string {
   return stripped.length > 64 ? `${stripped.slice(0, 63)}…` : stripped
 }
 
+/** Re-render on a timer while `active`, so elapsed-time checks stay current. */
+function useNow(active: boolean, intervalMs = 1500): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!active) return
+    const id = setInterval(() => setNow(Date.now()), intervalMs)
+    return () => clearInterval(id)
+  }, [active, intervalMs])
+  return now
+}
+
 export function GapReviewDialog() {
   const { orgId } = useActiveOrg()
   const qc = useQueryClient()
+  const { lastUploadAt, clearUpload } = useUploadSignal()
   const { data } = useGapChats(orgId, "open", {
     refetchInterval: REVIEW_POLL_MS,
   })
   const chats = data ?? []
+
+  // Are we still waiting on questions from a just-uploaded doc? Poll the doc list
+  // so we can tell when indexing has settled (and gap detection is likely done).
+  const awaiting = lastUploadAt != null && chats.length === 0
+  const now = useNow(awaiting)
+  const elapsed = lastUploadAt != null ? now - lastUploadAt : Infinity
+  const { data: docs } = useDocuments(orgId, {
+    refetchInterval: awaiting ? 3000 : false,
+  })
+  const docsBusy = (docs ?? []).some(
+    (d) => d.status === "pending" || d.status === "processing",
+  )
+  const settled = !docsBusy && elapsed > SETTLE_MS
+  const processing =
+    awaiting && elapsed < MAX_PROCESSING_MS && !settled
+
+  // Retire the upload signal once questions arrive or the wait is over, so the
+  // spinner doesn't linger (and can't reappear after the queue is answered).
+  useEffect(() => {
+    if (lastUploadAt == null) return
+    if (chats.length > 0 || elapsed >= MAX_PROCESSING_MS || settled) {
+      clearUpload()
+    }
+  }, [chats.length, elapsed, settled, lastUploadAt, clearUpload])
 
   const [selectedId, setSelectedId] = useState<ObjectId | null>(null)
   // The selection follows the list: keep the chosen chat, else fall to the
@@ -77,7 +120,7 @@ export function GapReviewDialog() {
     }
   }, [chats.length, qc])
 
-  if (!selected) return null
+  if (!selected && !processing) return null
 
   return (
     <Dialog open>
@@ -91,12 +134,20 @@ export function GapReviewDialog() {
         <DialogHeader>
           <DialogTitle>Reconcile your docs with the code</DialogTitle>
           <DialogDescription>
-            These claims from your uploaded docs look out of date against the
-            current code. Answer each one to update the knowledge graph — this
-            stays open until they're all resolved.
+            {selected
+              ? "These claims from your uploaded docs look out of date against the current code. Answer each one to update the knowledge graph — this stays open until they're all resolved."
+              : "We're checking your uploaded documents against the codebase for anything that looks out of date."}
           </DialogDescription>
         </DialogHeader>
 
+        {!selected ? (
+          <div className="flex h-[26rem] items-center justify-center">
+            <div className="flex items-center gap-3 text-muted-foreground">
+              <Loader2 className="size-5 animate-spin" />
+              <span className="text-sm">Processing your documents…</span>
+            </div>
+          </div>
+        ) : (
         <div className="grid h-[26rem] grid-cols-[14rem_1fr] gap-4 overflow-hidden">
           <div className="flex min-h-0 flex-col rounded-lg border">
             <div className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">
@@ -128,6 +179,7 @@ export function GapReviewDialog() {
 
           <GapReviewDetail key={selected.id} orgId={orgId} chat={selected} />
         </div>
+        )}
       </DialogContent>
     </Dialog>
   )

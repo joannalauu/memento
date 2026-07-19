@@ -4,12 +4,18 @@
  * box uploads a file; the list below shows each doc's indexing status and polls
  * while anything is still processing.
  */
-import { useRef, type ChangeEvent } from "react"
+import { useEffect, useRef, useState, type ChangeEvent } from "react"
 import { FileText, Loader2, Upload } from "lucide-react"
 import { toast } from "sonner"
 
-import { type Document, useDocuments, useUploadDocument } from "@/lib/api"
+import {
+  type Document,
+  useDocuments,
+  useOrgRepos,
+  useUploadDocument,
+} from "@/lib/api"
 import { useActiveOrg } from "@/components/app-shell/org-context"
+import { useUploadSignal } from "@/features/gap-review/upload-signal"
 import { Badge } from "@/components/ui/badge"
 import {
   Card,
@@ -18,6 +24,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 
 function statusBadge(status: Document["status"]) {
@@ -48,10 +61,21 @@ function formatDate(iso: string): string {
 export function DocumentsSection() {
   const { org, orgId } = useActiveOrg()
   const inputRef = useRef<HTMLInputElement>(null)
+  const { notifyUpload } = useUploadSignal()
 
   // Uploading requires a connected GitHub installation — the org's repos are
   // the context legacy docs get folded into, so gate the action until then.
   const connected = org.githubInstallationId != null
+
+  // A doc must be scoped to a repo for the backend to enrich it (extract its
+  // decisions) and detect gaps against the code — that's what raises the review
+  // questions. Default to the first repo; let the user pick when there's more.
+  const { data: repos } = useOrgRepos(orgId, { enabled: connected })
+  const [repoId, setRepoId] = useState<string | undefined>()
+  useEffect(() => {
+    if (!repoId && repos?.length) setRepoId(repos[0].id)
+  }, [repos, repoId])
+  const activeRepoId = repoId ?? repos?.[0]?.id
 
   const { data: docs, isPending, error } = useDocuments(orgId, {
     // Poll while any doc is still indexing so the status settles on its own.
@@ -64,15 +88,22 @@ export function DocumentsSection() {
   })
 
   const upload = useUploadDocument(orgId, {
-    onSuccess: (doc) => toast.success(`Uploaded ${doc.filename}`),
+    onSuccess: (doc) => {
+      toast.success(`Uploaded ${doc.filename}`)
+      // Tell the gap-review dialog to pop open with a processing spinner while
+      // the backend enriches the doc and generates any review questions.
+      notifyUpload()
+    },
     onError: (err) => toast.error(err.message || "Upload failed."),
   })
+
+  const canUpload = connected && !!activeRepoId && !upload.isPending
 
   const onPick = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     // Reset the input so picking the same file again still fires onChange.
     e.target.value = ""
-    if (file) upload.mutate({ file })
+    if (file && activeRepoId) upload.mutate({ file, repoId: activeRepoId })
   }
 
   return (
@@ -84,17 +115,34 @@ export function DocumentsSection() {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
+        {connected && repos && repos.length > 1 && (
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground text-sm">Repository</span>
+            <Select value={activeRepoId} onValueChange={setRepoId}>
+              <SelectTrigger size="sm" className="w-64">
+                <SelectValue placeholder="Select a repository" />
+              </SelectTrigger>
+              <SelectContent>
+                {repos.map((r) => (
+                  <SelectItem key={r.id} value={r.id}>
+                    {r.owner}/{r.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
         <input
           ref={inputRef}
           type="file"
           className="hidden"
           onChange={onPick}
-          disabled={!connected || upload.isPending}
+          disabled={!canUpload}
         />
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
-          disabled={!connected || upload.isPending}
+          disabled={!canUpload}
           className="border-input hover:border-primary/50 hover:bg-muted/50 focus-visible:border-ring focus-visible:ring-ring/50 flex flex-col items-center gap-2 rounded-lg border border-dashed p-8 text-center transition-colors focus-visible:ring-[3px] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
         >
           <div className="bg-muted text-muted-foreground grid size-10 place-items-center rounded-full">
@@ -108,9 +156,11 @@ export function DocumentsSection() {
             {upload.isPending ? "Uploading…" : "Click to upload a document"}
           </span>
           <span className="text-muted-foreground text-xs">
-            {connected
-              ? "Choose a file from your computer"
-              : "Connect GitHub to upload documents"}
+            {!connected
+              ? "Connect GitHub to upload documents"
+              : !activeRepoId
+                ? "Sync a repository to upload documents"
+                : "Choose a file from your computer"}
           </span>
         </button>
 

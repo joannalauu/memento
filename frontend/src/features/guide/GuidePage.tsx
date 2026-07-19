@@ -24,7 +24,7 @@ import {
 const MCP_COMMAND = `claude mcp add --transport http memento https://api.memento-ai.ca/mcp \\
   --header "Authorization: Bearer YOUR_API_KEY"`
 
-const HOOK_COMMAND = `npx -y @memento/hook install --api-key YOUR_API_KEY`
+const HOOK_COMMAND = `npx -y @memento-ai/hook install --api-key YOUR_API_KEY`
 
 export function GuidePage() {
   const { role } = useActiveOrg()
@@ -144,7 +144,7 @@ function ClaudeHookSection() {
             </code>{" "}
             (never committed). To remove it later, run{" "}
             <code className="text-foreground font-mono">
-              npx @memento/hook uninstall
+              npx @memento-ai/hook uninstall
             </code>
             .
           </p>
