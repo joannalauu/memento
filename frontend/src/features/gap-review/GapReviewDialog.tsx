@@ -21,6 +21,7 @@ import {
   useAnswerGapChatAudio,
   useDocuments,
   useGapChats,
+  useOrgRepos,
   type GapChat,
   type ObjectId,
 } from "@/lib/api"
@@ -226,6 +227,18 @@ export function GapReviewDialog() {
 function GapReviewDetail({ orgId, chat }: { orgId: ObjectId; chat: GapChat }) {
   const [text, setText] = useState("")
 
+  // The chat only carries a repoId; look up the owner/name/branch so the changed
+  // files can link to their source on GitHub.
+  const { data: repos } = useOrgRepos(orgId)
+  const repo = repos?.find((r) => r.id === chat.repoId)
+  const fileUrl = (file: string): string | null =>
+    repo
+      ? `https://github.com/${repo.owner}/${repo.name}/blob/${repo.defaultBranch}/${file
+          .split("/")
+          .map(encodeURIComponent)
+          .join("/")}`
+      : null
+
   const onResolved = (resolution: "verified" | "superseded") => {
     toast.success(
       resolution === "verified"
@@ -266,12 +279,29 @@ function GapReviewDetail({ orgId, chat }: { orgId: ObjectId; chat: GapChat }) {
         <p className="text-sm whitespace-pre-wrap">{question}</p>
         {chat.changedFiles.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-1.5">
-            {chat.changedFiles.map((f) => (
-              <Badge key={f} variant="outline" className="gap-1 font-mono text-xs">
-                <FileText className="size-3" />
-                {f}
-              </Badge>
-            ))}
+            {chat.changedFiles.map((f) => {
+              const url = fileUrl(f)
+              return (
+                <Badge
+                  key={f}
+                  asChild={url != null}
+                  variant="outline"
+                  className="gap-1 font-mono text-xs"
+                >
+                  {url ? (
+                    <a href={url} target="_blank" rel="noopener noreferrer">
+                      <FileText className="size-3" />
+                      {f}
+                    </a>
+                  ) : (
+                    <>
+                      <FileText className="size-3" />
+                      {f}
+                    </>
+                  )}
+                </Badge>
+              )
+            })}
           </div>
         )}
       </ScrollArea>
