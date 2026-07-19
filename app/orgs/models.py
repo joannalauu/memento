@@ -54,7 +54,6 @@ class Org(Document):
     class Settings:
         name = "orgs"
         indexes = [
-            IndexModel("slug", name="slug_unique", unique=True),
             IndexModel("bbAssistantId", name="bb_assistant_id_unique", unique=True),
             IndexModel(
                 "githubInstallationId",
