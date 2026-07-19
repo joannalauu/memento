@@ -69,6 +69,14 @@ export const orgsApi = {
   /** `POST /orgs/{org_id}/invites/{token}/accept`. */
   acceptInvite: (orgId: ObjectId, token: string) =>
     request<Org>(`/orgs/${orgId}/invites/${token}/accept`, { method: "POST" }),
+
+  /**
+   * `POST /orgs/invites/{token}/accept` — accept by token alone. The org is
+   * resolved server-side from the token; used by the join-org page, which has
+   * only the token from the invite link.
+   */
+  acceptInviteByToken: (token: string) =>
+    request<Org>(`/orgs/invites/${token}/accept`, { method: "POST" }),
 }
 
 // ─── query hooks ─────────────────────────────────────────────────────────────
@@ -187,6 +195,25 @@ export function useAcceptOrgInvite(
     onSuccess: (data, vars, ...rest) => {
       qc.invalidateQueries({ queryKey: queryKeys.orgs.lists() })
       options?.onSuccess?.(data, vars, ...rest)
+    },
+  })
+}
+
+/**
+ * Accept an org invite by its token alone (the join-org page has only the token
+ * from the invite link). Invalidates the org lists so the freshly-joined org
+ * shows up on the next route resolve.
+ */
+export function useAcceptOrgInviteByToken(
+  options?: UseMutationOptions<Org, Error, string>,
+) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (token: string) => orgsApi.acceptInviteByToken(token),
+    ...options,
+    onSuccess: (data, token, ...rest) => {
+      qc.invalidateQueries({ queryKey: queryKeys.orgs.lists() })
+      options?.onSuccess?.(data, token, ...rest)
     },
   })
 }

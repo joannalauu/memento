@@ -6,6 +6,7 @@ import { ThemeProvider } from "@/components/app-shell/theme-context"
 import { AppShell } from "@/components/app-shell/AppShell"
 import { RequireAuth } from "@/features/auth/RequireAuth"
 import { RootPage } from "@/features/auth/RootPage"
+import { JoinOrgPage } from "@/features/auth/JoinOrgPage"
 import { OnboardingPage } from "@/features/auth/OnboardingPage"
 import { AdminHomePage } from "@/features/admin/AdminHomePage"
 import { UserHomePage } from "@/features/home/UserHomePage"
@@ -13,6 +14,7 @@ import { GraphPage } from "@/features/graph/GraphPage"
 
 const router = createBrowserRouter([
   { path: "/", element: <RootPage /> },
+  { path: "/join-org", element: <JoinOrgPage /> },
   {
     element: <RequireAuth />,
     children: [

@@ -231,6 +231,105 @@ def test_invite_email_html_contains_accept_link():
     assert "Acme" in html
 
 
+# ── token-only accept endpoint (SPA join-org page) ───────────────────────────
+
+
+def _wire_token_accept(monkeypatch, *, invite, org):
+    async def _by_token(_token):
+        return invite
+
+    async def _get_org(_id):
+        return org
+
+    monkeypatch.setattr(orgs_routes, "get_org_invite_by_token", _by_token)
+    monkeypatch.setattr(orgs_routes, "get_org", _get_org)
+
+
+async def test_accept_by_token_happy_path(monkeypatch):
+    user = SimpleNamespace(id=PydanticObjectId(), email="invitee@example.com")
+    org = _org()
+    invite = _invite(org, email="invitee@example.com")
+    accepted = {}
+
+    async def _accept(*, org, invite, user_id):
+        accepted["user_id"] = user_id
+        return org
+
+    _wire_token_accept(monkeypatch, invite=invite, org=org)
+    monkeypatch.setattr(orgs_routes, "accept_org_invite", _accept)
+
+    result = await orgs_routes.accept_org_invite_by_token_endpoint(
+        invite.token, user=user
+    )
+    assert result is org
+    assert accepted["user_id"] == user.id
+
+
+async def test_accept_by_token_unknown_token_404(monkeypatch):
+    async def _by_token(_token):
+        return None
+
+    monkeypatch.setattr(orgs_routes, "get_org_invite_by_token", _by_token)
+    user = SimpleNamespace(id=PydanticObjectId(), email="invitee@example.com")
+
+    with pytest.raises(HTTPException) as exc:
+        await orgs_routes.accept_org_invite_by_token_endpoint("missing", user=user)
+    assert exc.value.status_code == status.HTTP_404_NOT_FOUND
+
+
+async def test_accept_by_token_wrong_email_403(monkeypatch):
+    user = SimpleNamespace(id=PydanticObjectId(), email="someone.else@example.com")
+    org = _org()
+    invite = _invite(org, email="invitee@example.com")
+    _wire_token_accept(monkeypatch, invite=invite, org=org)
+
+    with pytest.raises(HTTPException) as exc:
+        await orgs_routes.accept_org_invite_by_token_endpoint(invite.token, user=user)
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+async def test_accept_by_token_expired_410(monkeypatch):
+    user = SimpleNamespace(id=PydanticObjectId(), email="invitee@example.com")
+    org = _org()
+    invite = _invite(org, email="invitee@example.com", expired=True)
+    _wire_token_accept(monkeypatch, invite=invite, org=org)
+
+    with pytest.raises(HTTPException) as exc:
+        await orgs_routes.accept_org_invite_by_token_endpoint(invite.token, user=user)
+    assert exc.value.status_code == status.HTTP_410_GONE
+
+
+async def test_accept_by_token_already_accepted_409(monkeypatch):
+    user = SimpleNamespace(id=PydanticObjectId(), email="invitee@example.com")
+    org = _org()
+    invite = _invite(org, email="invitee@example.com", accepted=True)
+    _wire_token_accept(monkeypatch, invite=invite, org=org)
+
+    with pytest.raises(HTTPException) as exc:
+        await orgs_routes.accept_org_invite_by_token_endpoint(invite.token, user=user)
+    assert exc.value.status_code == status.HTTP_409_CONFLICT
+
+
+async def test_accept_by_token_already_member_409(monkeypatch):
+    user = SimpleNamespace(id=PydanticObjectId(), email="invitee@example.com")
+    org = _org(members=[_member(None)])
+    org.members[0].userId = user.id
+    invite = _invite(org, email="invitee@example.com")
+    _wire_token_accept(monkeypatch, invite=invite, org=org)
+
+    with pytest.raises(HTTPException) as exc:
+        await orgs_routes.accept_org_invite_by_token_endpoint(invite.token, user=user)
+    assert exc.value.status_code == status.HTTP_409_CONFLICT
+
+
+async def test_join_login_bridge_redirects_to_spa():
+    resp = await orgs_routes.join_org_login_bridge("tok_abc123")
+    assert isinstance(resp, RedirectResponse)
+    assert resp.status_code == status.HTTP_303_SEE_OTHER
+    location = resp.headers["location"]
+    assert location.endswith("/join-org?token=tok_abc123")
+
+
 # ── Auth0 return-to threading ─────────────────────────────────────────────────
 
 

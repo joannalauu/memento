@@ -35,10 +35,10 @@ export function LandingPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          <Button size="lg" onClick={login}>
+          <Button size="lg" onClick={() => login()}>
             Sign up
           </Button>
-          <Button size="lg" variant="outline" onClick={login}>
+          <Button size="lg" variant="outline" onClick={() => login()}>
             Log in
           </Button>
           <p className="text-muted-foreground text-center text-xs">

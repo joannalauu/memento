@@ -8,7 +8,7 @@ import { useState, type FormEvent } from "react"
 import { Check, Copy, Loader2, UserPlus } from "lucide-react"
 import { toast } from "sonner"
 
-import { API_BASE_URL, useCreateOrgInvite } from "@/lib/api"
+import { useCreateOrgInvite } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -23,7 +23,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
 function acceptLink(token: string): string {
-  return `${API_BASE_URL}/orgs/invites/${token}`
+  // Points at the SPA join-org page — the same link the invite email uses.
+  return `${window.location.origin}/join-org?token=${token}`
 }
 
 export function InviteMemberDialog({ orgId }: { orgId: string }) {

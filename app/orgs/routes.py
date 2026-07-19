@@ -226,9 +226,10 @@ async def create_org_invite_endpoint(
             detail="Only an org admin may invite members",
         )
     invite = await create_org_invite(org_id=org_id, email=payload.email)
-    # The token is globally unique, so the accept-link needs only the token; the
-    # landing endpoint resolves the org from it and drives login-then-accept.
-    accept_url = f"{get_app_settings().api_base}/orgs/invites/{invite.token}"
+    # The token is globally unique, so the accept-link needs only the token. The
+    # button points at the SPA join-org page, which checks the session, drives
+    # login-then-return if needed, and calls the token-only accept endpoint.
+    accept_url = f"{get_app_settings().frontend_base}/join-org?token={invite.token}"
     # Best-effort: the invite is already persisted and independently redeemable
     # via the link, so a Resend outage must not fail the request. Log and return
     # the invite — the caller can surface/copy the link and retry the send.
@@ -291,6 +292,67 @@ async def accept_org_invite_endpoint(
             detail="Already a member of this org",
         )
     return await accept_org_invite(org=org, invite=invite, user_id=user.id)
+
+
+@router.post("/invites/{token}/accept", response_model=OrgRead)
+async def accept_org_invite_by_token_endpoint(
+    token: str,
+    user: User = Depends(get_current_user),
+) -> OrgRead:
+    """Accept an org invite by its token alone.
+
+    The SPA join-org page has only the token from the invite link (not the org
+    id), so this resolves the org from the token and applies the same guards as
+    the org-scoped accept endpoint above."""
+    invite = await get_org_invite_by_token(token)
+    if invite is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Invite not found"
+        )
+    org: Org = await get_org(invite.orgId)
+    if org is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Org not found"
+        )
+    if invite.acceptedAt is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Invite already accepted"
+        )
+    # TTL reaps expired invites eventually, but the sweep lags — reject
+    # explicitly so a not-yet-swept expired invite can't be accepted.
+    if invite.expiresAt < datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE, detail="Invite has expired"
+        )
+    # The invite is addressed to a specific email; require the logged-in user
+    # to match it so a forwarded token can't be redeemed by someone else.
+    if invite.email.lower() != user.email.lower():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This invite was issued to a different email",
+        )
+    if any(m.userId == user.id for m in org.members):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Already a member of this org",
+        )
+    return await accept_org_invite(org=org, invite=invite, user_id=user.id)
+
+
+@router.get("/invites/{token}/continue", include_in_schema=False)
+async def join_org_login_bridge(token: str):
+    """Same-origin login-return bridge for the SPA join-org flow.
+
+    The Auth0 plate only honors a same-origin (relative) ``return_to``, which
+    resolves to *this* API origin after the callback — it can't land directly on
+    the cross-origin SPA. The join-org page therefore points ``return_to`` here;
+    once authenticated the browser reaches this route and is bounced to the SPA
+    join page (now carrying session cookies), which calls the accept endpoint."""
+    app_url = get_app_settings().frontend_base
+    return RedirectResponse(
+        url=f"{app_url}/join-org?token={token}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
 
 
 @router.get("/invites/{token}", include_in_schema=False)
