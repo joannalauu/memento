@@ -1,8 +1,11 @@
 /**
- * Admin dashboard: the org's member roster with invites, plus API key
- * management. Members who aren't admins are redirected to their own home.
+ * Admin dashboard: the org's member roster with invites, GitHub connection,
+ * plus API key management. Members who aren't admins are redirected to their
+ * own home.
  */
-import { Navigate } from "react-router-dom"
+import { useEffect } from "react"
+import { Navigate, useSearchParams } from "react-router-dom"
+import { toast } from "sonner"
 
 import { useActiveOrg } from "@/components/app-shell/org-context"
 import {
@@ -15,11 +18,29 @@ import {
 } from "@/components/ui/card"
 import { ApiKeySection } from "@/features/api-keys/ApiKeySection"
 import { DocumentsSection } from "@/features/documents/DocumentsSection"
+import { GithubSection } from "./GithubSection"
 import { InviteMemberDialog } from "./InviteMemberDialog"
 import { MembersTable } from "./MembersTable"
 
 export function AdminHomePage() {
   const { org, orgId, role } = useActiveOrg()
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // Surface the result of the GitHub install flow, which returns here via the
+  // backend's post-install redirect (`?github=connected`). The org state is
+  // already fresh from the full page load, so this only drives the toast.
+  useEffect(() => {
+    if (searchParams.get("github") === "connected") {
+      toast.success("GitHub connected")
+      setSearchParams(
+        (prev) => {
+          prev.delete("github")
+          return prev
+        },
+        { replace: true },
+      )
+    }
+  }, [searchParams, setSearchParams])
 
   if (role !== "admin") return <Navigate to="/home" replace />
 
@@ -47,6 +68,8 @@ export function AdminHomePage() {
             <MembersTable orgId={orgId} />
           </CardContent>
         </Card>
+
+        <GithubSection />
 
         <DocumentsSection />
 
