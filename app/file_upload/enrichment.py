@@ -41,6 +41,14 @@ logger = logging.getLogger(__name__)
 MAX_DOC_CHARS = 100_000  # doc text handed to the extractor, bounded for the prompt
 MAX_CLAIMS = 40  # ceiling on memories written per doc
 
+# Extraction is pinned to a specific model rather than the org assistant's
+# default: this is a closed-world, forced-JSON call, and a default model that
+# doesn't support json_output makes Backboard reject the request (a 400 that this
+# module swallows into zero decisions). Anthropic Sonnet handles the JSON contract
+# and the large doc+tree prompt reliably.
+EXTRACTION_LLM_PROVIDER = "anthropic"
+EXTRACTION_MODEL_NAME = "claude-sonnet-4-20250514"
+
 CLAIM_EXTRACTION_PROMPT = """\
 You are extracting durable engineering DECISIONS from a legacy document so they
 can be indexed against the code they govern.
@@ -147,7 +155,8 @@ async def extract_decision_claims(
             assistant_id=assistant_id,
             memory="off",
             json_output=True,
-            model_name=model_name,
+            llm_provider=EXTRACTION_LLM_PROVIDER,
+            model_name=model_name or EXTRACTION_MODEL_NAME,
         )
     except Exception:  # noqa: BLE001 — extraction is best-effort, must not raise
         logger.exception("legacy-doc claim extraction call failed")
