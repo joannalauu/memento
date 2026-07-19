@@ -20,6 +20,7 @@ degrades to fewer memories, never an exception: enrichment is best-effort
 augmentation and the doc is already safely in RAG regardless.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -29,7 +30,10 @@ from pydantic import BaseModel, Field, ValidationError
 from app.backboard.client import Backboard
 from app.backboard.executor import final_text
 from app.backboard.models import MemoryIndex
-from app.file_upload.crud import set_document_enrichment_status
+from app.file_upload.crud import (
+    normalize_document_status,
+    set_document_enrichment_status,
+)
 from app.file_upload.gap_detection import detect_and_open_gaps
 from app.file_upload.models import DocumentIndexEntry
 from app.github.client import GitHubApp
@@ -48,6 +52,13 @@ MAX_CLAIMS = 40  # ceiling on memories written per doc
 # and the large doc+tree prompt reliably.
 EXTRACTION_LLM_PROVIDER = "anthropic"
 EXTRACTION_MODEL_NAME = "claude-sonnet-4-20250514"
+
+# Backboard rejects send_message to an assistant while ANY of its documents is
+# still indexing. Enrichment fires right after upload, so the just-uploaded doc
+# is normally still "processing" — poll until the assistant's docs settle before
+# the extraction call, or extraction 400s and the doc yields zero decisions.
+_INDEXING_POLL_INTERVAL = 2.0  # seconds between document-status polls
+_INDEXING_POLL_TRIES = 60  # ~2 min ceiling before proceeding best-effort anyway
 
 CLAIM_EXTRACTION_PROMPT = """\
 You are extracting durable engineering DECISIONS from a legacy document so they
@@ -243,6 +254,39 @@ async def enrich_document(
     return written
 
 
+async def _await_assistant_documents_indexed(bb: Backboard, assistant_id: str) -> bool:
+    """Block until none of the assistant's documents are still indexing.
+
+    Backboard rejects send_message while any assistant document is pending or
+    processing (see BackboardValidationError), and enrichment runs immediately
+    after upload, so the just-uploaded doc is normally still indexing. Polls the
+    assistant's document list until nothing is pending/processing. Returns True
+    once clear, or False if the poll ceiling is reached or the status can't be
+    read — the caller proceeds best-effort either way (the extraction call
+    already degrades gracefully on failure)."""
+    for _ in range(_INDEXING_POLL_TRIES):
+        try:
+            docs = await bb.list_assistant_documents(assistant_id)
+        except Exception:  # noqa: BLE001 — can't poll → proceed and let the call try
+            logger.exception("could not poll assistant document status")
+            return False
+        still_indexing = [
+            d
+            for d in docs
+            if normalize_document_status(getattr(d, "status", None))
+            in ("pending", "processing")
+        ]
+        if not still_indexing:
+            return True
+        await asyncio.sleep(_INDEXING_POLL_INTERVAL)
+    logger.warning(
+        "assistant %s still has documents indexing after poll ceiling; "
+        "proceeding with enrichment anyway",
+        assistant_id,
+    )
+    return False
+
+
 async def run_document_enrichment(
     entry: DocumentIndexEntry,
     *,
@@ -259,6 +303,10 @@ async def run_document_enrichment(
     After the doc's decisions are written, `detect_and_open_gaps` checks each
     against the current code and opens a gap chat where they already disagree, so
     the reviewer is asked to reconcile stale claims right after upload."""
+    # The doc was uploaded moments ago and is still indexing; Backboard blocks
+    # every send_message to the assistant until it (and any sibling) finishes, so
+    # wait for the RAG index to settle before enrichment's extraction call.
+    await _await_assistant_documents_indexed(bb, org.bbAssistantId)
     try:
         written = await enrich_document(
             entry, doc_text=doc_text, org=org, repo=repo, bb=bb, github=github
