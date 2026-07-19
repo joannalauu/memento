@@ -62,7 +62,6 @@ function ShellHeader({ me }: { me: User }) {
   return (
     <header className="flex items-center justify-between gap-4 border-b px-4 py-2">
       <div className="flex items-center gap-3">
-        <Waypoints className="text-muted-foreground size-5" />
         {orgs.length > 1 ? (
           <Select value={org.id} onValueChange={setOrgId}>
             <SelectTrigger size="sm" className="w-48">
@@ -114,7 +113,7 @@ function PrimaryNav({ homePath }: { homePath: string }) {
       </NavLink>
       <NavLink to="/graph" className={linkClass}>
         <Waypoints className="size-4" />
-        Memory Graph
+        Graph
       </NavLink>
     </nav>
   )

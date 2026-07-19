@@ -129,7 +129,7 @@ export function InviteMemberDialog({ orgId }: { orgId: string }) {
                 required
               />
             </div>
-            <DialogFooter>
+            <div className="mt-4 flex justify-end">
               <Button
                 type="submit"
                 disabled={invite.isPending || !email.trim()}
@@ -137,7 +137,7 @@ export function InviteMemberDialog({ orgId }: { orgId: string }) {
                 {invite.isPending && <Loader2 className="animate-spin" />}
                 Send invite
               </Button>
-            </DialogFooter>
+            </div>
           </form>
         )}
       </DialogContent>

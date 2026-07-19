@@ -14,7 +14,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
@@ -83,9 +82,9 @@ export function ApiKeyReveal({ created, onClose }: ApiKeyRevealProps) {
           </span>
         </div>
 
-        <DialogFooter>
+        <div className="mt-4 flex justify-end">
           <Button onClick={onClose}>Done</Button>
-        </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   )

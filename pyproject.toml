@@ -45,6 +45,11 @@ packages = ["app"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 
+[tool.ruff]
+# Match requires-python so builtins added in newer Pythons (e.g. `anext`, 3.10+)
+# aren't flagged as undefined names by the pinned pre-commit ruff.
+target-version = "py313"
+
 [tool.hackplate]
 # The user model used by the auth plate. Must inherit from AbstractUser (SQL plates)
 # or AbstractUserDocument (mongo plate). Change this if you define a custom user model.
