@@ -6,18 +6,26 @@ generators stand in for Backboard, and traversal events go through the real
 `traversal_channel` under unique session ids."""
 
 import asyncio
+import io
 import json
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 from backboard import BackboardAPIError
 from beanie import PydanticObjectId
 from fastapi import HTTPException
+from starlette.datastructures import UploadFile
 
 import app.graph.ask as ask_mod
 from app.backboard.executor import ExecutorError, MaxRoundsExceeded
-from app.graph.ask import AskRequest, _ask_stream, ask_graph_endpoint
+from app.graph.ask import (
+    AskRequest,
+    _ask_stream,
+    ask_graph_endpoint,
+    transcribe_graph_question_endpoint,
+)
 from app.graph.qa_tools import CitationCollector
 from app.traversal import TraversalTag, traversal_channel
 
@@ -91,12 +99,21 @@ async def test_traversal_events_interleave_in_order(monkeypatch):
     frames = await _frames(_ask_stream(SimpleNamespace(), "q", **_stream_kwargs(sid)))
     assert frames == [
         {"type": "content_delta", "content": "a"},
-        {"type": "tool_activity", "nodeId": "dec:x", "edgeKind": None, "kind": "entry"},
+        {
+            "type": "tool_activity",
+            "nodeId": "dec:x",
+            "edgeKind": None,
+            "kind": "entry",
+            "fromNodeId": None,
+            "seq": 0,
+        },
         {
             "type": "tool_activity",
             "nodeId": "pr:o/r:5",
             "edgeKind": "introduced",
             "kind": "hop",
+            "fromNodeId": "dec:x",
+            "seq": 1,
         },
         {"type": "content_delta", "content": "b"},
         {"type": "done", "citations": []},
@@ -237,6 +254,84 @@ async def test_non_member_403(monkeypatch):
     with pytest.raises(HTTPException) as exc_info:
         await _call_endpoint(monkeypatch, org)
     assert exc_info.value.status_code == 403
+
+
+# ─── transcribe endpoint ──────────────────────────────────────────────────────
+
+
+def _upload(data=b"audio-bytes", filename="q.webm"):
+    return UploadFile(filename=filename, file=io.BytesIO(data))
+
+
+def _stt_bb(transcript="why do we use mongo"):
+    # The real SDK Thread carries `thread_id` (a UUID), not `id` — mirror that
+    # so the mock guards the attribute the endpoint actually reads.
+    return SimpleNamespace(
+        create_thread=AsyncMock(return_value=SimpleNamespace(thread_id="t-1")),
+        transcribe_audio=AsyncMock(return_value=transcript),
+        delete_thread=AsyncMock(return_value={}),
+    )
+
+
+async def test_transcribe_happy_path(monkeypatch):
+    org = _member_org()
+    monkeypatch.setattr(ask_mod, "get_org", AsyncMock(return_value=org))
+    bb = _stt_bb("  why do we use mongo  ")
+
+    result = await transcribe_graph_question_endpoint(
+        org.id, file=_upload(), user=USER, bb=bb
+    )
+
+    assert result.transcript == "why do we use mongo"  # trimmed
+    bb.create_thread.assert_awaited_once_with("asst-1")
+    assert bb.transcribe_audio.await_args.kwargs["thread_id"] == "t-1"
+    bb.delete_thread.assert_awaited_once_with("t-1")  # throwaway thread cleaned up
+
+
+async def test_transcribe_empty_is_422(monkeypatch):
+    org = _member_org()
+    monkeypatch.setattr(ask_mod, "get_org", AsyncMock(return_value=org))
+    bb = _stt_bb("   ")
+    with pytest.raises(HTTPException) as exc_info:
+        await transcribe_graph_question_endpoint(
+            org.id, file=_upload(), user=USER, bb=bb
+        )
+    assert exc_info.value.status_code == 422
+    bb.delete_thread.assert_awaited_once()  # cleanup still ran
+
+
+async def test_transcribe_unknown_org_404(monkeypatch):
+    monkeypatch.setattr(ask_mod, "get_org", AsyncMock(return_value=None))
+    bb = _stt_bb()
+    with pytest.raises(HTTPException) as exc_info:
+        await transcribe_graph_question_endpoint(
+            PydanticObjectId(), file=_upload(), user=USER, bb=bb
+        )
+    assert exc_info.value.status_code == 404
+    bb.create_thread.assert_not_called()  # guard fails before any Backboard call
+
+
+async def test_transcribe_non_member_403(monkeypatch):
+    org = _member_org(members=[SimpleNamespace(userId=PydanticObjectId())])
+    monkeypatch.setattr(ask_mod, "get_org", AsyncMock(return_value=org))
+    bb = _stt_bb()
+    with pytest.raises(HTTPException) as exc_info:
+        await transcribe_graph_question_endpoint(
+            org.id, file=_upload(), user=USER, bb=bb
+        )
+    assert exc_info.value.status_code == 403
+
+
+async def test_transcribe_cleans_up_thread_on_failure(monkeypatch):
+    org = _member_org()
+    monkeypatch.setattr(ask_mod, "get_org", AsyncMock(return_value=org))
+    bb = _stt_bb()
+    bb.transcribe_audio = AsyncMock(side_effect=RuntimeError("stt down"))
+    with pytest.raises(RuntimeError):
+        await transcribe_graph_question_endpoint(
+            org.id, file=_upload(), user=USER, bb=bb
+        )
+    bb.delete_thread.assert_awaited_once_with("t-1")  # finally cleaned up
 
 
 async def test_session_id_from_header_tag(monkeypatch):

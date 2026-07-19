@@ -14,7 +14,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -103,12 +102,12 @@ export function InviteMemberDialog({ orgId }: { orgId: string }) {
                 {copied ? <Check className="text-green-600" /> : <Copy />}
               </Button>
             </div>
-            <DialogFooter>
+            <div className="mt-4 flex justify-end gap-2">
               <Button variant="outline" onClick={reset}>
                 Invite another
               </Button>
               <Button onClick={() => setOpen(false)}>Done</Button>
-            </DialogFooter>
+            </div>
           </>
         ) : (
           <form onSubmit={onSubmit}>

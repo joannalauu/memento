@@ -11,6 +11,7 @@
 export * from "./types"
 export { API_BASE_URL } from "./config"
 export { ApiError, setUnauthorizedHandler } from "./http"
+export { streamSSE } from "./stream"
 export { queryKeys } from "./query-keys"
 export { createQueryClient } from "./query-client"
 export { ApiProvider } from "./provider"

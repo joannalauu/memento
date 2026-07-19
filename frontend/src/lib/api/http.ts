@@ -82,6 +82,28 @@ function messageFromDetail(
   return `Request failed with status ${status}`
 }
 
+/**
+ * Normalize a non-2xx {@link Response} into a thrown {@link ApiError}: parse
+ * the FastAPI `detail`, fire the global 401 hook. Shared by {@link request}
+ * and the streaming client (lib/api/stream.ts), so both surface identical
+ * errors.
+ */
+export async function throwApiError(response: Response): Promise<never> {
+  let detail: string | ValidationErrorItem[] | null = null
+  try {
+    const data = await response.json()
+    detail = data?.detail ?? null
+  } catch {
+    detail = null
+  }
+  if (response.status === 401) onUnauthorized?.()
+  throw new ApiError(
+    response.status,
+    detail,
+    messageFromDetail(response.status, detail),
+  )
+}
+
 export interface RequestOptions {
   method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE"
   params?: QueryParams
@@ -120,21 +142,7 @@ export async function request<T>(
 
   const response = await fetch(buildUrl(path, params), init)
 
-  if (!response.ok) {
-    let detail: string | ValidationErrorItem[] | null = null
-    try {
-      const data = await response.json()
-      detail = data?.detail ?? null
-    } catch {
-      detail = null
-    }
-    if (response.status === 401) onUnauthorized?.()
-    throw new ApiError(
-      response.status,
-      detail,
-      messageFromDetail(response.status, detail),
-    )
-  }
+  if (!response.ok) await throwApiError(response)
 
   // 204 No Content and other empty bodies decode to undefined.
   if (response.status === 204 || response.headers.get("content-length") === "0") {

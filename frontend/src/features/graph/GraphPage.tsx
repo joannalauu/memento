@@ -14,10 +14,12 @@ import type { ForceGraphMethods } from "react-force-graph-2d"
 import { queryKeys, useOrgGraph } from "@/lib/api"
 import { useActiveOrg } from "@/components/app-shell/org-context"
 import { useTheme } from "@/components/app-shell/theme-context"
+import { AskBar } from "./AskBar"
 import { GraphView } from "./GraphView"
 import { Legend } from "./Legend"
 import { NodeDetailPanel } from "./NodeDetailPanel"
 import type { GraphLink, GraphNode } from "./types"
+import { useAskGraph } from "./useAskGraph"
 import { useLiveHighlight } from "./useLiveHighlight"
 import { useLiveTraversal } from "./useLiveTraversal"
 import { usePacingBuffer } from "./pacingBuffer"
@@ -46,9 +48,28 @@ export function GraphPage() {
     useLiveHighlight({ graphRef, nodesById })
   const { enqueue, clear } = usePacingBuffer({ onRelease: apply })
 
+  // Web Q&A (T4.5): the ask's SSE stream feeds the same buffer/overlay.
+  const askGraph = useAskGraph({
+    orgId,
+    onTraversalEvent: enqueue,
+    onStart: () => {
+      clear()
+      reset()
+    },
+  })
+  // Gate WS events off while an ask streams: the pacing buffer releases the
+  // globally-lowest seq with no session awareness, so mixing an ask's fresh
+  // seq 0.. with a followed MCP session's high seqs would starve/reorder one
+  // of them. The user-initiated ask wins the overlay. Ref-read so the WS
+  // hook's onEvent identity stays stable.
+  const askStreamingRef = useRef(false)
+  askStreamingRef.current = askGraph.status === "streaming"
+
   const { status: liveStatus } = useLiveTraversal(orgId, {
     enabled: !!graph,
-    onEvent: enqueue,
+    onEvent: (e) => {
+      if (!askStreamingRef.current) enqueue(e)
+    },
     // Missed too much to reconcile: drop the in-flight trace and refetch static.
     onRefresh: () => {
       clear()
@@ -103,6 +124,18 @@ export function GraphPage() {
               readOnly={isTracing}
             />
             <Legend themeKey={themeKey} />
+            <AskBar
+              orgId={orgId}
+              status={askGraph.status}
+              answer={askGraph.answer}
+              citations={askGraph.citations}
+              error={askGraph.error}
+              onAsk={askGraph.ask}
+              onCancel={askGraph.cancel}
+              onDismiss={askGraph.dismiss}
+              onCitationClick={hop}
+              getNodeLabel={(id) => nodesById.get(id)?.label ?? null}
+            />
             {(liveStatus === "following" || liveStatus === "waiting") && (
               <div className="text-muted-foreground bg-background/70 pointer-events-none absolute top-3 right-3 rounded-full border px-2.5 py-1 text-xs backdrop-blur">
                 {liveStatus === "following" ? "● live" : "waiting for session…"}

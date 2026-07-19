@@ -51,6 +51,26 @@ export const graphApi = {
       `/orgs/${orgId}/graph/nodes/${encodeNodeId(nodeId)}`,
       { signal },
     ),
+
+  /**
+   * `POST /orgs/{org_id}/graph/transcribe` — speech-to-text for the ask bar.
+   * Uploads recorded audio (multipart) and returns the transcript to drop into
+   * the question input. Transcription runs through Backboard/ElevenLabs.
+   */
+  transcribe: (
+    orgId: ObjectId,
+    audio: Blob,
+    filename: string,
+    signal?: AbortSignal,
+  ) => {
+    const form = new FormData()
+    form.append("file", audio, filename)
+    return request<{ transcript: string }>(`/orgs/${orgId}/graph/transcribe`, {
+      method: "POST",
+      body: form,
+      signal,
+    })
+  },
 }
 
 export function useOrgGraph(

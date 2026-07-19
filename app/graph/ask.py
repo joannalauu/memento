@@ -5,7 +5,8 @@ the traversal events its graph-tool calls emit, so the browser that asked can
 animate its graph without a second connection. Frames (``data: <json>\\n\\n``):
 
     {"type": "content_delta", "content": ...}
-    {"type": "tool_activity", "nodeId": ..., "edgeKind": ..., "kind": ...}
+    {"type": "tool_activity", "nodeId": ..., "edgeKind": ..., "kind": ...,
+     "fromNodeId": ..., "seq": ...}
     {"type": "done", "citations": [{"nodeId": ..., "prNumber": ...}]}   terminal
     {"type": "error", "code": ..., "message": ...}                      terminal
 
@@ -25,13 +26,17 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
+import shutil
+import tempfile
 from collections.abc import AsyncIterator, Mapping
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from backboard import BackboardAPIError
 from beanie import PydanticObjectId
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -163,6 +168,11 @@ async def _ask_stream(
                         "nodeId": payload.nodeId,
                         "edgeKind": payload.edgeKind,
                         "kind": payload.kind,
+                        # fromNodeId + seq let the web client feed these frames
+                        # into the same highlight/pacing pipeline the live WS
+                        # uses (edges need the source node; pacing sorts by seq).
+                        "fromNodeId": payload.fromNodeId,
+                        "seq": payload.seq,
                     }
                 )
             elif kind == "error":
@@ -182,6 +192,21 @@ async def _ask_stream(
             await task
 
 
+async def _require_member(org_id: PydanticObjectId, user: User) -> Org:
+    """The org, or 404/403 — only a member may reach the graph-ask surface."""
+    org = await get_org(org_id)
+    if org is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Org not found"
+        )
+    if not any(m.userId == user.id for m in org.members):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a member of this org",
+        )
+    return org
+
+
 @router.post("/{org_id}/graph/ask")
 async def ask_graph_endpoint(
     org_id: PydanticObjectId,
@@ -194,17 +219,7 @@ async def ask_graph_endpoint(
     """Ask a question about the org's knowledge graph; SSE response interleaves
     the streamed answer with this ask's traversal events. Only a member of the
     org may ask."""
-    org: Org | None = await get_org(org_id)
-    if org is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Org not found"
-        )
-    is_member = any(m.userId == user.id for m in org.members)
-    if not is_member:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this org",
-        )
+    org = await _require_member(org_id, user)
 
     session_id = tag.session_id if tag is not None else uuid4().hex
     repos = await list_repos_for_org(org_id)
@@ -230,3 +245,53 @@ async def ask_graph_endpoint(
             "X-Session-Id": session_id,
         },
     )
+
+
+class TranscriptResponse(BaseModel):
+    transcript: str
+
+
+@router.post("/{org_id}/graph/transcribe", response_model=TranscriptResponse)
+async def transcribe_graph_question_endpoint(
+    org_id: PydanticObjectId,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    bb: Backboard = Depends(get_backboard),
+) -> TranscriptResponse:
+    """Transcribe a spoken question to text (ElevenLabs STT via Backboard) so the
+    web ask bar can be driven by voice. Returns the transcript for the client to
+    drop into the input — the user still submits it themselves. Only a member of
+    the org may transcribe.
+
+    Mirrors the gap-chat voice path (app/gap_chat/routes.py), with one
+    difference: this surface keeps no persistent thread, and Backboard's STT is
+    thread-scoped, so it uses a throwaway thread and deletes it once done."""
+    org = await _require_member(org_id, user)
+
+    # STT needs a thread to attach the transcript message to; this ask surface
+    # has none, so spin up a disposable one and clean it up afterward.
+    thread = await bb.create_thread(org.bbAssistantId)
+    thread_id = str(thread.thread_id)
+
+    # The SDK transcribes from a path, so spool the upload to a temp file,
+    # preserving the suffix so the provider can infer the audio format.
+    suffix = Path(file.filename or "").suffix or ".webm"
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+    try:
+        with os.fdopen(tmp_fd, "wb") as tmp:
+            shutil.copyfileobj(file.file, tmp)
+        transcript = await bb.transcribe_audio(thread_id=thread_id, audio_path=tmp_path)
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        with contextlib.suppress(Exception):
+            await bb.delete_thread(thread_id)
+
+    if not transcript.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No speech detected in the audio",
+        )
+    return TranscriptResponse(transcript=transcript.strip())
