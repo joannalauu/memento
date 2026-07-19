@@ -167,7 +167,7 @@ export function GapReviewDialog() {
         onEscapeKeyDown={(e) => e.preventDefault()}
         onPointerDownOutside={(e) => e.preventDefault()}
         onInteractOutside={(e) => e.preventDefault()}
-        className="sm:max-w-3xl"
+        className="sm:max-w-6xl"
       >
         <DialogHeader>
           <DialogTitle>Reconcile your docs with the code</DialogTitle>
@@ -179,14 +179,14 @@ export function GapReviewDialog() {
         </DialogHeader>
 
         {!selected ? (
-          <div className="flex h-[26rem] items-center justify-center">
+          <div className="flex h-160 items-center justify-center">
             <div className="flex items-center gap-3 text-muted-foreground">
               <Loader2 className="size-5 animate-spin" />
               <span className="text-sm">Processing your documents…</span>
             </div>
           </div>
         ) : (
-        <div className="grid h-[26rem] grid-cols-[14rem_1fr] gap-4 overflow-hidden">
+        <div className="grid h-160 grid-cols-[14rem_1fr] gap-4 overflow-hidden">
           <div className="flex min-h-0 flex-col rounded-lg border">
             <div className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">
               {chats.length} to review
@@ -293,7 +293,7 @@ function GapReviewDetail({ orgId, chat }: { orgId: ObjectId; chat: GapChat }) {
           className="min-h-16 flex-1 resize-none"
           aria-label="Your answer"
         />
-        <div className="flex flex-col gap-2">
+        <div className="flex gap-2">
           {!recorder.unsupported && (
             <Button
               type="button"
