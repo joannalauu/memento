@@ -77,7 +77,11 @@ class MongoPlate(DatabasePlate):
         self.document_models.append(get_user_model())
         self.document_models.extend(get_registered_documents())
         self.document_models = list(dict.fromkeys(self.document_models))
-        await init_beanie(database=self.db, document_models=self.document_models)
+        await init_beanie(
+            database=self.db,
+            document_models=self.document_models,
+            allow_index_dropping=True,
+        )
 
     async def disconnect(self) -> None:
         if self.client:

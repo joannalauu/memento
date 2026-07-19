@@ -60,7 +60,7 @@ class Org(Document):
                 "githubInstallationId",
                 name="github_installation_id_unique",
                 unique=True,
-                sparse=True,
+                partialFilterExpression={"githubInstallationId": {"$type": "int"}},
             ),
             IndexModel("members.userId", name="members_user_id"),  # multikey
         ]
