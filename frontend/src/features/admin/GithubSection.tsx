@@ -2,15 +2,24 @@
  * GitHub App connection for the active org (admin-only surface — rendered from
  * the admin dashboard, which non-admins can't reach). When the org isn't yet
  * bound to an installation it offers a Connect button that redirects the browser
- * to GitHub's install page; once connected it lists the synced repositories.
+ * to GitHub's install page; once connected it lists the synced repositories and
+ * offers a "Manage repositories" button to change the selection.
  *
  * The connect flow is a full-page navigation: the returned install URL points at
  * github.com, and GitHub redirects back through the backend `/github/setup`
  * endpoint (which binds the installation and syncs repos) to
  * `GITHUB_POST_INSTALL_REDIRECT_URL`. The frontend is not involved in the
  * callback itself.
+ *
+ * Repository selection is owned by GitHub, not by us: which repos an org can see
+ * is the App installation's repository access list. So "add / remove repos"
+ * isn't a local mutation — it's the same connect flow. For an already-installed
+ * App, GitHub redirects `/apps/{slug}/installations/new` straight to that
+ * installation's configure page, where the admin edits the selection. On return,
+ * `/github/setup` re-syncs and the `installation_repositories` webhook reconciles
+ * adds and removals. Hence the manage button reuses `useConnectGithub`.
  */
-import { GitBranch, Loader2 } from "lucide-react"
+import { GitBranch, Loader2, Settings } from "lucide-react"
 import { toast } from "sonner"
 
 import { useConnectGithub, useOrgRepos } from "@/lib/api"
@@ -85,15 +94,49 @@ function ConnectButton({ orgId }: { orgId: string }) {
   )
 }
 
+function ManageReposButton({ orgId }: { orgId: string }) {
+  const connect = useConnectGithub({
+    onError: (err) =>
+      toast.error(err.message || "Couldn't open GitHub repository settings."),
+  })
+
+  const onClick = () => {
+    connect.mutate(orgId, {
+      // Same full-page navigation as the initial connect: GitHub sends an
+      // already-installed App to its configure page, where the admin edits the
+      // repository selection. The page is about to unload, so stay pending.
+      onSuccess: ({ installUrl }) => {
+        window.location.href = installUrl
+      },
+    })
+  }
+
+  const pending = connect.isPending || connect.isSuccess
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="ml-auto"
+      onClick={onClick}
+      disabled={pending}
+    >
+      {pending ? <Loader2 className="animate-spin" /> : <Settings />}
+      Manage repositories
+    </Button>
+  )
+}
+
 function ConnectedState({ orgId }: { orgId: string }) {
   const { data: repos, isPending, error } = useOrgRepos(orgId)
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <GitBranch className="size-4" />
         <span className="text-sm font-medium">Connected</span>
         <Badge variant="secondary">GitHub App installed</Badge>
+        <ManageReposButton orgId={orgId} />
       </div>
 
       {isPending ? (
