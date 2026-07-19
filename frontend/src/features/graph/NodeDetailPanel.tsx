@@ -3,7 +3,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { useGraphNode } from "@/lib/api";
+import { useGraphNode, useOrgRepos } from "@/lib/api";
+import { githubBlobUrl } from "@/lib/github";
 import { NODE_TYPE_LABELS } from "./palette";
 import type { GraphNode, RelatedDecision, StalenessStatus } from "./types";
 
@@ -32,6 +33,16 @@ function fmtDate(iso?: string | null): string {
   });
 }
 
+// Decision content is stored with a "[repo: owner/name] " prefix (injected in
+// app/backboard/client.py). Split it off so the repo renders on its own line
+// instead of crowding — and truncating — the decision title / related rows.
+const REPO_PREFIX = /^\[repo:\s*([^\]]+)\]\s*/;
+function splitRepo(text?: string | null): { repo: string | null; body: string } {
+  if (!text) return { repo: null, body: "" };
+  const m = text.match(REPO_PREFIX);
+  return m ? { repo: m[1], body: text.slice(m[0].length) } : { repo: null, body: text };
+}
+
 function DecisionRow({
   d,
   onHop,
@@ -39,14 +50,16 @@ function DecisionRow({
   d: RelatedDecision;
   onHop: (id: string) => void;
 }) {
+  const { repo, body } = splitRepo(d.label);
   return (
     <button
       type="button"
       onClick={() => onHop(d.id)}
       className="hover:bg-accent block w-full rounded-md px-2 py-2 text-left transition-colors"
     >
-      <div className="truncate text-sm font-medium">{d.label}</div>
-      <div className="text-muted-foreground mt-0.5 flex items-center gap-2 text-xs">
+      <div className="text-xs font-medium break-words">{body}</div>
+      <div className="text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+        {repo && <span className="break-all">{repo}</span>}
         {d.prNumber != null && <span>PR #{d.prNumber}</span>}
         {d.author && <span>{d.author}</span>}
         <span>{fmtDate(d.date)}</span>
@@ -72,6 +85,18 @@ export function NodeDetailPanel({
   );
 
   const isDecision = node.type === "decision";
+  // Prefer the full snapshot (untruncated) once detail loads; fall back to the
+  // pre-truncated node label while it's still fetching. Repo is pulled out of
+  // the "[repo: …]" prefix so it no longer crowds the title.
+  const { repo, body } = splitRepo(detail?.contentSnapshot ?? node.label);
+  const title = isDecision ? body.split("\n")[0] || node.label : node.label;
+
+  // Resolve the "owner/name" from the content prefix to a full repo record so
+  // the Files list can link to GitHub (owner/name/defaultBranch).
+  const { data: repos } = useOrgRepos(orgId);
+  const fileRepo = repo
+    ? repos?.find((r) => `${r.owner}/${r.name}` === repo)
+    : undefined;
 
   return (
     <aside className="bg-card flex h-full w-[360px] shrink-0 flex-col border-l">
@@ -80,8 +105,8 @@ export function NodeDetailPanel({
           <Badge variant="outline" className="mb-2">
             {NODE_TYPE_LABELS[node.type]}
           </Badge>
-          <h2 className="text-base leading-snug font-semibold break-words">
-            {node.label}
+          <h2 className="text-sm leading-snug font-semibold break-words">
+            {title}
           </h2>
         </div>
         <Button
@@ -124,6 +149,12 @@ export function NodeDetailPanel({
               </div>
 
               <dl className="space-y-2 text-sm">
+                {repo && (
+                  <div className="flex justify-between gap-4">
+                    <dt className="text-muted-foreground">Repo</dt>
+                    <dd className="text-right break-all">{repo}</dd>
+                  </div>
+                )}
                 {detail.author && (
                   <div className="flex justify-between gap-4">
                     <dt className="text-muted-foreground">Author</dt>
@@ -164,13 +195,13 @@ export function NodeDetailPanel({
                 )}
               </dl>
 
-              {detail.contentSnapshot && (
+              {body && (
                 <div>
                   <h3 className="text-muted-foreground mb-1 text-xs font-medium tracking-wide uppercase">
                     Content
                   </h3>
                   <p className="text-sm break-words whitespace-pre-wrap">
-                    {detail.contentSnapshot}
+                    {body}
                   </p>
                 </div>
               )}
@@ -181,11 +212,26 @@ export function NodeDetailPanel({
                     Files
                   </h3>
                   <ul className="space-y-0.5 font-mono text-xs">
-                    {detail.files.map((f) => (
-                      <li key={f} className="break-all">
-                        {f}
-                      </li>
-                    ))}
+                    {detail.files.map((f) => {
+                      const url = githubBlobUrl(fileRepo, f);
+                      return (
+                        <li key={f} className="break-all">
+                          {url ? (
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary inline-flex items-center gap-1 hover:underline"
+                            >
+                              {f}
+                              <ExternalLink className="size-3 shrink-0" />
+                            </a>
+                          ) : (
+                            f
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               ) : null}

@@ -26,6 +26,7 @@ import {
   type ObjectId,
 } from "@/lib/api"
 import { useActiveOrg } from "@/components/app-shell/org-context"
+import { githubBlobUrl } from "@/lib/github"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -231,13 +232,7 @@ function GapReviewDetail({ orgId, chat }: { orgId: ObjectId; chat: GapChat }) {
   // files can link to their source on GitHub.
   const { data: repos } = useOrgRepos(orgId)
   const repo = repos?.find((r) => r.id === chat.repoId)
-  const fileUrl = (file: string): string | null =>
-    repo
-      ? `https://github.com/${repo.owner}/${repo.name}/blob/${repo.defaultBranch}/${file
-          .split("/")
-          .map(encodeURIComponent)
-          .join("/")}`
-      : null
+  const fileUrl = (file: string): string | null => githubBlobUrl(repo, file)
 
   const onResolved = (resolution: "verified" | "superseded") => {
     toast.success(
@@ -307,22 +302,33 @@ function GapReviewDetail({ orgId, chat }: { orgId: ObjectId; chat: GapChat }) {
       </ScrollArea>
 
       <div className="flex items-end gap-2">
-        <Textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault()
-              submit()
+        <div className="relative flex-1">
+          <Textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault()
+                submit()
+              }
+            }}
+            disabled={busy || recording}
+            placeholder={
+              recording ? "Listening… tap the mic to finish" : "Type your answer…"
             }
-          }}
-          disabled={busy || recording}
-          placeholder={
-            recording ? "Listening… tap the mic to finish" : "Type your answer…"
-          }
-          className="min-h-16 flex-1 resize-none"
-          aria-label="Your answer"
-        />
+            className="min-h-16 w-full resize-none"
+            aria-label="Your answer"
+          />
+          {spoken.isPending && (
+            <div
+              className="absolute inset-0 flex items-center justify-center gap-2 rounded-md bg-background text-sm text-muted-foreground"
+              aria-live="polite"
+            >
+              <Loader2 className="size-4 animate-spin" />
+              Transcribing…
+            </div>
+          )}
+        </div>
         <div className="flex gap-2">
           {!recorder.unsupported && (
             <Button
@@ -348,15 +354,6 @@ function GapReviewDetail({ orgId, chat }: { orgId: ObjectId; chat: GapChat }) {
           </Button>
         </div>
       </div>
-      {(busy || recording) && (
-        <p className="text-xs text-muted-foreground" aria-live="polite">
-          {spoken.isPending
-            ? "Transcribing and resolving…"
-            : typed.isPending
-              ? "Resolving…"
-              : "Listening…"}
-        </p>
-      )}
     </div>
   )
 }
