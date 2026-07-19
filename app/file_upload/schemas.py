@@ -21,6 +21,12 @@ class DocumentRead(BaseModel):
     filename: str
     kind: Literal["upload", "decision_digest"]
     status: Literal["pending", "processing", "indexed", "error"]
+    # Background enrichment + gap-detection phase, distinct from the indexing
+    # `status` above — see app/file_upload/models.py.
+    enrichmentStatus: Literal["none", "enriching", "done", "failed"] = "none"
+    # Enrichment outcome (meaningful once enrichmentStatus == "done").
+    decisionsWritten: int = 0
+    gapsOpened: int = 0
     createdAt: datetime
 
     # Surfaced when status == "indexed".

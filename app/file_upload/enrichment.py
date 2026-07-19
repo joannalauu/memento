@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field, ValidationError
 from app.backboard.client import Backboard
 from app.backboard.executor import final_text
 from app.backboard.models import MemoryIndex
+from app.file_upload.crud import set_document_enrichment_status
 from app.file_upload.gap_detection import detect_and_open_gaps
 from app.file_upload.models import DocumentIndexEntry
 from app.github.client import GitHubApp
@@ -255,8 +256,20 @@ async def run_document_enrichment(
         )
     except Exception:  # noqa: BLE001 — background task; nothing to surface to
         logger.exception("enrichment failed for document %s", entry.id)
+        await set_document_enrichment_status(entry.id, "failed")
         return
+    gaps = 0
     try:
-        await detect_and_open_gaps(written, org=org, repo=repo, bb=bb, github=github)
+        gaps = await detect_and_open_gaps(
+            written, org=org, repo=repo, bb=bb, github=github
+        )
     except Exception:  # noqa: BLE001 — gap detection is best-effort augmentation
         logger.exception("gap detection failed for document %s", entry.id)
+    finally:
+        # Enrichment itself succeeded, so the analysis phase is over regardless of
+        # whether gap detection turned anything up (or errored) — mark it done,
+        # recording the outcome, so any client waiting on this phase (the
+        # gap-review spinner) can stop and report what was extracted.
+        await set_document_enrichment_status(
+            entry.id, "done", decisions_written=len(written), gaps_opened=gaps
+        )

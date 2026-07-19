@@ -29,27 +29,12 @@ from app.file_upload.crud import (
 from app.file_upload.enrichment import run_document_enrichment
 from app.file_upload.models import DocumentIndexEntry
 from app.file_upload.schemas import DocumentRead
+from app.file_upload.text_extract import extract_document_text
 from app.github.client import GitHubApp, get_github
 from app.orgs.crud import get_org
 from app.orgs.models import Org, Repo, User
 
 router = APIRouter()
-
-# Best-effort text ceiling read from an uploaded file for anchor enrichment; the
-# extractor caps again at MAX_DOC_CHARS. Binary/unreadable files decode to noise
-# and enrichment no-ops on them — the doc is in RAG regardless.
-_MAX_DOC_TEXT_BYTES = 400_000
-
-
-def _read_document_text(path: str) -> str:
-    """Best-effort UTF-8 text of an uploaded file, for anchor enrichment. Binary
-    or unreadable files yield "" (enrichment then no-ops)."""
-    try:
-        with open(path, "rb") as fh:
-            raw = fh.read(_MAX_DOC_TEXT_BYTES)
-    except OSError:
-        return ""
-    return raw.decode("utf-8", errors="ignore")
 
 
 async def _sync_document(
@@ -118,7 +103,7 @@ async def upload_org_document_endpoint(
         with os.fdopen(tmp_fd, "wb") as tmp:
             shutil.copyfileobj(file.file, tmp)
         if repo is not None:
-            doc_text = _read_document_text(tmp_path)
+            doc_text = extract_document_text(tmp_path, file.filename)
         bb_document = await backboard.upload_document_to_assistant(
             org.bbAssistantId, tmp_path
         )
@@ -134,6 +119,9 @@ async def upload_org_document_endpoint(
         bb_document_id=str(bb_document.document_id),
         filename=file.filename or bb_document.filename,
         status=bb_document.status,
+        # A repo-scoped doc kicks off enrichment + gap detection below; flag the
+        # phase now so clients can distinguish "indexed" from "done analyzing".
+        enrichment_status="enriching" if repo is not None else "none",
     )
     if repo is not None:
         background_tasks.add_task(

@@ -41,11 +41,13 @@ import { useAudioRecorder } from "./useAudioRecorder"
 import { useUploadSignal } from "./upload-signal"
 
 const REVIEW_POLL_MS = 5000
-// After an upload, hold the processing spinner this long before giving up on
-// questions appearing (a hard cap so it can never hang), and stop earlier once
-// the docs finish indexing and this much has elapsed with nothing to ask.
+// Safety cap: if enrichment never reports back (e.g. the server restarted mid
+// background job), stop showing the spinner after this long so it can't hang.
 const MAX_PROCESSING_MS = 120_000
-const SETTLE_MS = 45_000
+// Grace covering the window between upload and the first docs refetch, so the
+// spinner shows immediately — before the freshly-uploaded doc (marked
+// `enriching`) has appeared in the polled list.
+const INITIAL_GRACE_MS = 6_000
 
 /** The bare claim, prefix-stripped and clipped for a list row. */
 function shortLabel(content: string): string {
@@ -74,28 +76,64 @@ export function GapReviewDialog() {
   const chats = data ?? []
 
   // Are we still waiting on questions from a just-uploaded doc? Poll the doc list
-  // so we can tell when indexing has settled (and gap detection is likely done).
+  // so we can watch its enrichment phase. The indexing `status` settles almost
+  // immediately, but gap detection runs in a separate background job tracked by
+  // `enrichmentStatus` — wait on that, not on indexing, so the spinner matches
+  // when questions can actually appear.
   const awaiting = lastUploadAt != null && chats.length === 0
   const now = useNow(awaiting)
   const elapsed = lastUploadAt != null ? now - lastUploadAt : Infinity
   const { data: docs } = useDocuments(orgId, {
     refetchInterval: awaiting ? 3000 : false,
   })
-  const docsBusy = (docs ?? []).some(
-    (d) => d.status === "pending" || d.status === "processing",
-  )
-  const settled = !docsBusy && elapsed > SETTLE_MS
-  const processing =
-    awaiting && elapsed < MAX_PROCESSING_MS && !settled
+  const enriching = (docs ?? []).some((d) => d.enrichmentStatus === "enriching")
+  // Settled once enrichment is no longer running — held off for a brief initial
+  // grace so a stale (pre-upload) doc list can't report "settled" before the new
+  // doc's `enriching` status has been fetched.
+  const settled = elapsed > INITIAL_GRACE_MS && !enriching
+  const processing = awaiting && elapsed < MAX_PROCESSING_MS && !settled
+
+  // When enrichment wraps up, pull the open-chat list right away instead of
+  // waiting for the next poll, so the dialog switches straight from the spinner
+  // to the questions (or closes cleanly when there were no gaps).
+  const wasEnrichingRef = useRef(false)
+  useEffect(() => {
+    if (enriching) {
+      wasEnrichingRef.current = true
+    } else if (wasEnrichingRef.current) {
+      wasEnrichingRef.current = false
+      qc.invalidateQueries({ queryKey: queryKeys.gapChats.all })
+    }
+  }, [enriching, qc])
 
   // Retire the upload signal once questions arrive or the wait is over, so the
   // spinner doesn't linger (and can't reappear after the queue is answered).
   useEffect(() => {
     if (lastUploadAt == null) return
-    if (chats.length > 0 || elapsed >= MAX_PROCESSING_MS || settled) {
+    if (chats.length > 0) {
       clearUpload()
+      return
     }
-  }, [chats.length, elapsed, settled, lastUploadAt, clearUpload])
+    if (elapsed >= MAX_PROCESSING_MS || settled) {
+      clearUpload()
+      // Enrichment may have written new decision nodes even when nothing
+      // conflicted — refresh the graph so they show without the 60s wait.
+      qc.invalidateQueries({ queryKey: queryKeys.graph.all })
+      // Explicit outcome: how many memories the just-finished doc produced.
+      const done = (docs ?? [])
+        .filter((d) => d.enrichmentStatus === "done")
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+      if (done) {
+        toast.success(
+          done.decisionsWritten > 0
+            ? `Added ${done.decisionsWritten} ${
+                done.decisionsWritten === 1 ? "memory node" : "memory nodes"
+              } to the graph.`
+            : "No decisions were found in your documents.",
+        )
+      }
+    }
+  }, [chats.length, elapsed, settled, lastUploadAt, clearUpload, qc, docs])
 
   const [selectedId, setSelectedId] = useState<ObjectId | null>(null)
   // The selection follows the list: keep the chosen chat, else fall to the

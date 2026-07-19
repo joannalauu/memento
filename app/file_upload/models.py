@@ -18,6 +18,15 @@ class DocumentIndexEntry(Document):
     filename: str
     kind: Literal["upload", "decision_digest"]
     status: Literal["pending", "processing", "indexed", "error"]
+    # Tracks the background enrichment + gap-detection phase, which is entirely
+    # separate from Backboard's indexing `status` above (a doc reads "indexed"
+    # the whole time enrichment is still running). "none" for docs that aren't
+    # repo-scoped and so never enrich. See app/file_upload/enrichment.py.
+    enrichmentStatus: Literal["none", "enriching", "done", "failed"] = "none"
+    # Enrichment outcome, filled when enrichmentStatus reaches "done": how many
+    # decision memories the doc produced and how many became gap-review questions.
+    decisionsWritten: int = 0
+    gapsOpened: int = 0
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     class Settings:

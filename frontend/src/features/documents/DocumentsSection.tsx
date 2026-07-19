@@ -33,21 +33,38 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 
-function statusBadge(status: Document["status"]) {
-  switch (status) {
-    case "indexed":
-      return <Badge>Indexed</Badge>
-    case "error":
-      return <Badge variant="destructive">Error</Badge>
-    default:
-      // pending | processing
-      return (
-        <Badge variant="secondary">
-          <Loader2 className="animate-spin" />
-          {status === "processing" ? "Processing" : "Pending"}
-        </Badge>
-      )
+function statusBadge(doc: Document) {
+  if (doc.status === "error") return <Badge variant="destructive">Error</Badge>
+  // Indexed into RAG, but the background enrichment + gap-detection job is still
+  // running (the indexing `status` doesn't reflect it). Surface it as still
+  // working so this row matches what the gap-review dialog is waiting on.
+  if (doc.status === "indexed" && doc.enrichmentStatus === "enriching") {
+    return (
+      <Badge variant="secondary">
+        <Loader2 className="animate-spin" />
+        Analyzing
+      </Badge>
+    )
   }
+  if (doc.status === "indexed") return <Badge>Indexed</Badge>
+  // pending | processing
+  return (
+    <Badge variant="secondary">
+      <Loader2 className="animate-spin" />
+      {doc.status === "processing" ? "Processing" : "Pending"}
+    </Badge>
+  )
+}
+
+/** One-line summary of what a finished doc's enrichment produced. */
+function enrichmentSummary(doc: Document): string {
+  if (doc.decisionsWritten === 0) return "No decisions found"
+  const decisions = `${doc.decisionsWritten} ${
+    doc.decisionsWritten === 1 ? "decision" : "decisions"
+  }`
+  return doc.gapsOpened > 0
+    ? `${decisions} · ${doc.gapsOpened} to review`
+    : decisions
 }
 
 function formatDate(iso: string): string {
@@ -78,10 +95,14 @@ export function DocumentsSection() {
   const activeRepoId = repoId ?? repos?.[0]?.id
 
   const { data: docs, isPending, error } = useDocuments(orgId, {
-    // Poll while any doc is still indexing so the status settles on its own.
+    // Poll while any doc is still indexing or enriching so the status settles
+    // on its own (enrichment runs past "indexed" as a background job).
     refetchInterval: (query) =>
       query.state.data?.some(
-        (d) => d.status === "pending" || d.status === "processing",
+        (d) =>
+          d.status === "pending" ||
+          d.status === "processing" ||
+          d.enrichmentStatus === "enriching",
       )
         ? 3000
         : false,
@@ -136,6 +157,9 @@ export function DocumentsSection() {
           ref={inputRef}
           type="file"
           className="hidden"
+          // Formats we can extract decisions from for the graph. Other types
+          // still upload to RAG for chat, but won't produce memory nodes.
+          accept=".md,.markdown,.txt,.text,.rst,.pdf,.docx"
           onChange={onPick}
           disabled={!canUpload}
         />
@@ -183,10 +207,12 @@ export function DocumentsSection() {
                     </p>
                     <p className="text-muted-foreground text-xs">
                       {formatDate(doc.createdAt)}
+                      {doc.enrichmentStatus === "done" &&
+                        ` · ${enrichmentSummary(doc)}`}
                     </p>
                   </div>
                 </div>
-                {statusBadge(doc.status)}
+                {statusBadge(doc)}
               </li>
             ))}
           </ul>

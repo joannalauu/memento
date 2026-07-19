@@ -233,6 +233,12 @@ export interface NodeDetail {
 
 export type DocumentKind = "upload" | "decision_digest"
 export type DocumentStatus = "pending" | "processing" | "indexed" | "error"
+/**
+ * Background enrichment + gap-detection phase, separate from `status` (which
+ * only tracks RAG indexing — a doc reads "indexed" while this is still
+ * "enriching"). "none" for docs that aren't repo-scoped and so never enrich.
+ */
+export type EnrichmentStatus = "none" | "enriching" | "done" | "failed"
 
 export interface Document {
   id: ObjectId
@@ -242,6 +248,10 @@ export interface Document {
   filename: string
   kind: DocumentKind
   status: DocumentStatus
+  enrichmentStatus: EnrichmentStatus
+  /** Enrichment outcome, meaningful once `enrichmentStatus === "done"`. */
+  decisionsWritten: number
+  gapsOpened: number
   createdAt: ISODateString
   /** Present once `status === "indexed"`. */
   chunkCount: number | null

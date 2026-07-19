@@ -1,7 +1,7 @@
 {
   "name": "@memento-ai/hook",
-  "version": "0.1.0",
-  "description": "Claude Code SessionEnd hook that captures agent transcripts and ships them to Memento — redacted, gzipped, fail-silent.",
+  "version": "0.1.1",
+  "description": "Claude Code SessionEnd hook that captures agent transcripts and ships them to Memento.",
   "keywords": [
     "claude",
     "claude-code",

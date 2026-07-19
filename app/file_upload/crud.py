@@ -48,12 +48,35 @@ async def update_document_status(
     entry: DocumentIndexEntry, status: object
 ) -> DocumentIndexEntry:
     """Refresh an entry's status from a Backboard document status, persisting
-    only when it actually changed."""
+    only when it actually changed. Writes just the ``status`` field (atomic
+    ``$set``) so a concurrent enrichment-status update isn't clobbered."""
     normalized = normalize_document_status(status)
     if entry.status != normalized:
         entry.status = normalized
-        await entry.save()
+        await entry.set({DocumentIndexEntry.status: normalized})
     return entry
+
+
+async def set_document_enrichment_status(
+    doc_id: PydanticObjectId,
+    status: Literal["none", "enriching", "done", "failed"],
+    *,
+    decisions_written: int | None = None,
+    gaps_opened: int | None = None,
+) -> None:
+    """Persist a document's enrichment/gap-detection phase, addressing it by id
+    and writing just those fields so a concurrent indexing-status refresh isn't
+    clobbered. Pass the counts when moving to "done" to record the outcome.
+    No-ops if the entry was deleted mid-enrichment."""
+    entry = await DocumentIndexEntry.get(doc_id)
+    if entry is None:
+        return
+    updates: dict[object, object] = {DocumentIndexEntry.enrichmentStatus: status}
+    if decisions_written is not None:
+        updates[DocumentIndexEntry.decisionsWritten] = decisions_written
+    if gaps_opened is not None:
+        updates[DocumentIndexEntry.gapsOpened] = gaps_opened
+    await entry.set(updates)
 
 
 async def delete_document_index_entry(entry: DocumentIndexEntry) -> None:
@@ -69,8 +92,11 @@ async def create_document_index_entry(
     status: object,
     kind: Literal["upload", "decision_digest"] = "upload",
     repo_id: PydanticObjectId | None = None,
+    enrichment_status: Literal["none", "enriching", "done", "failed"] = "none",
 ) -> DocumentIndexEntry:
-    """Record an uploaded Backboard document in the org's document index."""
+    """Record an uploaded Backboard document in the org's document index. Pass
+    ``enrichment_status="enriching"`` when a background enrichment job is being
+    kicked off for this doc, so the phase is visible before the job reports."""
     entry = DocumentIndexEntry(
         orgId=org_id,
         repoId=repo_id,
@@ -78,6 +104,7 @@ async def create_document_index_entry(
         filename=filename,
         kind=kind,
         status=normalize_document_status(status),
+        enrichmentStatus=enrichment_status,
     )
     await entry.insert()
     return entry
