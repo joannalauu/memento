@@ -1,4 +1,4 @@
-import { createBrowserRouter, RouterProvider } from "react-router-dom"
+import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom"
 
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -29,6 +29,7 @@ const router = createBrowserRouter([
       },
     ],
   },
+  { path: "*", element: <Navigate to="/" replace /> },
 ])
 
 function App() {

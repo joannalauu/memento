@@ -1,0 +1,4 @@
+# Render static site: serve the SPA for every path (200 = rewrite, not redirect)
+# so React Router can handle routing. Unknown routes are then redirected to "/"
+# by the catch-all route in App.tsx.
+/*    /index.html   200
