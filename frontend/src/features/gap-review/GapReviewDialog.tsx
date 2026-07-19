@@ -1,0 +1,242 @@
+/**
+ * Gap review: a blocking, non-dismissible modal that appears whenever the org
+ * has open gap chats — the questions raised when an uploaded doc's claim looks
+ * out of date against the current code (see app/file_upload/gap_detection.py and
+ * app/gap_chat). The engineer must answer every open question (typed or by
+ * voice) before they can get back to the app; each answer resolves a memory to
+ * verified or superseded, and once the queue empties the knowledge graph is
+ * refreshed so the new/updated memory nodes appear.
+ *
+ * Mounted once in the app shell. It polls the open-chat list so questions
+ * surface shortly after a document finishes enriching.
+ */
+import { useEffect, useRef, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
+import { toast } from "sonner"
+import { FileText, Loader2, Mic, SendHorizontal, Square } from "lucide-react"
+
+import {
+  queryKeys,
+  useAnswerGapChat,
+  useAnswerGapChatAudio,
+  useGapChats,
+  type GapChat,
+  type ObjectId,
+} from "@/lib/api"
+import { useActiveOrg } from "@/components/app-shell/org-context"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { Textarea } from "@/components/ui/textarea"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { cn } from "@/lib/utils"
+import { useAudioRecorder } from "./useAudioRecorder"
+
+const REVIEW_POLL_MS = 5000
+
+/** The bare claim, prefix-stripped and clipped for a list row. */
+function shortLabel(content: string): string {
+  const stripped = content.replace(/^\[repo:[^\]]*\]\s*/, "").trim()
+  return stripped.length > 64 ? `${stripped.slice(0, 63)}…` : stripped
+}
+
+export function GapReviewDialog() {
+  const { orgId } = useActiveOrg()
+  const qc = useQueryClient()
+  const { data } = useGapChats(orgId, "open", {
+    refetchInterval: REVIEW_POLL_MS,
+  })
+  const chats = data ?? []
+
+  const [selectedId, setSelectedId] = useState<ObjectId | null>(null)
+  // The selection follows the list: keep the chosen chat, else fall to the
+  // first still-open one (so answering auto-advances to the next question).
+  const selected = chats.find((c) => c.id === selectedId) ?? chats[0] ?? null
+  useEffect(() => {
+    if (selected && selected.id !== selectedId) setSelectedId(selected.id)
+  }, [selected, selectedId])
+
+  // When the queue drains after having had questions, the graph now holds new
+  // verified/superseded nodes — pull it fresh and tell the user we're done.
+  const hadOpenRef = useRef(false)
+  useEffect(() => {
+    if (chats.length > 0) {
+      hadOpenRef.current = true
+      return
+    }
+    if (hadOpenRef.current) {
+      hadOpenRef.current = false
+      qc.invalidateQueries({ queryKey: queryKeys.graph.all })
+      toast.success("All questions answered — the graph has been updated.")
+    }
+  }, [chats.length, qc])
+
+  if (!selected) return null
+
+  return (
+    <Dialog open>
+      <DialogContent
+        showCloseButton={false}
+        onEscapeKeyDown={(e) => e.preventDefault()}
+        onPointerDownOutside={(e) => e.preventDefault()}
+        onInteractOutside={(e) => e.preventDefault()}
+        className="sm:max-w-3xl"
+      >
+        <DialogHeader>
+          <DialogTitle>Reconcile your docs with the code</DialogTitle>
+          <DialogDescription>
+            These claims from your uploaded docs look out of date against the
+            current code. Answer each one to update the knowledge graph — this
+            stays open until they're all resolved.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid h-[26rem] grid-cols-[14rem_1fr] gap-4 overflow-hidden">
+          <div className="flex min-h-0 flex-col rounded-lg border">
+            <div className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">
+              {chats.length} to review
+            </div>
+            <ScrollArea className="min-h-0 flex-1">
+              <ul className="p-1.5">
+                {chats.map((c) => (
+                  <li key={c.id}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedId(c.id)}
+                      className={cn(
+                        "w-full rounded-md px-2 py-1.5 text-left text-sm transition-colors",
+                        c.id === selected.id
+                          ? "bg-accent text-accent-foreground"
+                          : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
+                      )}
+                    >
+                      <span className="line-clamp-2">
+                        {shortLabel(c.memoryContent)}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </ScrollArea>
+          </div>
+
+          <GapReviewDetail key={selected.id} orgId={orgId} chat={selected} />
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function GapReviewDetail({ orgId, chat }: { orgId: ObjectId; chat: GapChat }) {
+  const [text, setText] = useState("")
+
+  const onResolved = (resolution: "verified" | "superseded") => {
+    toast.success(
+      resolution === "verified"
+        ? "Confirmed — the docs still hold."
+        : "Recorded the update — the old memory was superseded.",
+    )
+  }
+
+  const typed = useAnswerGapChat(orgId, chat.id, {
+    onSuccess: (r) => {
+      setText("")
+      onResolved(r.resolution)
+    },
+    onError: (e) => toast.error(e.message),
+  })
+  const spoken = useAnswerGapChatAudio(orgId, chat.id, {
+    onSuccess: (r) => onResolved(r.resolution),
+    onError: (e) => toast.error(e.message),
+  })
+  const recorder = useAudioRecorder({
+    onAudio: (file) => spoken.mutate(file),
+    onError: (m) => toast.error(m),
+  })
+
+  const recording = recorder.status === "recording"
+  const busy = typed.isPending || spoken.isPending
+  const question = chat.messages[0]?.text ?? shortLabel(chat.memoryContent)
+
+  const submit = () => {
+    const answer = text.trim()
+    if (!answer || busy) return
+    typed.mutate({ answer })
+  }
+
+  return (
+    <div className="flex min-h-0 flex-col gap-3">
+      <ScrollArea className="min-h-0 flex-1 rounded-lg border p-3">
+        <p className="text-sm whitespace-pre-wrap">{question}</p>
+        {chat.changedFiles.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {chat.changedFiles.map((f) => (
+              <Badge key={f} variant="outline" className="gap-1 font-mono text-xs">
+                <FileText className="size-3" />
+                {f}
+              </Badge>
+            ))}
+          </div>
+        )}
+      </ScrollArea>
+
+      <div className="flex items-end gap-2">
+        <Textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault()
+              submit()
+            }
+          }}
+          disabled={busy || recording}
+          placeholder={
+            recording ? "Listening… tap the mic to finish" : "Type your answer…"
+          }
+          className="min-h-16 flex-1 resize-none"
+          aria-label="Your answer"
+        />
+        <div className="flex flex-col gap-2">
+          {!recorder.unsupported && (
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              onClick={recorder.toggle}
+              disabled={busy}
+              aria-label={recording ? "Stop recording" : "Answer by voice"}
+              className={cn(recording && "text-destructive")}
+            >
+              {recording ? <Square /> : <Mic />}
+            </Button>
+          )}
+          <Button
+            type="button"
+            size="icon"
+            onClick={submit}
+            disabled={busy || recording || !text.trim()}
+            aria-label="Submit answer"
+          >
+            {busy ? <Loader2 className="animate-spin" /> : <SendHorizontal />}
+          </Button>
+        </div>
+      </div>
+      {(busy || recording) && (
+        <p className="text-xs text-muted-foreground" aria-live="polite">
+          {spoken.isPending
+            ? "Transcribing and resolving…"
+            : typed.isPending
+              ? "Resolving…"
+              : "Listening…"}
+        </p>
+      )}
+    </div>
+  )
+}

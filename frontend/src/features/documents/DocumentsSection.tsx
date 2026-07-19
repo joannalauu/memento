@@ -46,8 +46,12 @@ function formatDate(iso: string): string {
 }
 
 export function DocumentsSection() {
-  const { orgId } = useActiveOrg()
+  const { org, orgId } = useActiveOrg()
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Uploading requires a connected GitHub installation — the org's repos are
+  // the context legacy docs get folded into, so gate the action until then.
+  const connected = org.githubInstallationId != null
 
   const { data: docs, isPending, error } = useDocuments(orgId, {
     // Poll while any doc is still indexing so the status settles on its own.
@@ -85,12 +89,12 @@ export function DocumentsSection() {
           type="file"
           className="hidden"
           onChange={onPick}
-          disabled={upload.isPending}
+          disabled={!connected || upload.isPending}
         />
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
-          disabled={upload.isPending}
+          disabled={!connected || upload.isPending}
           className="border-input hover:border-primary/50 hover:bg-muted/50 focus-visible:border-ring focus-visible:ring-ring/50 flex flex-col items-center gap-2 rounded-lg border border-dashed p-8 text-center transition-colors focus-visible:ring-[3px] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
         >
           <div className="bg-muted text-muted-foreground grid size-10 place-items-center rounded-full">
@@ -104,7 +108,9 @@ export function DocumentsSection() {
             {upload.isPending ? "Uploading…" : "Click to upload a document"}
           </span>
           <span className="text-muted-foreground text-xs">
-            Choose a file from your computer
+            {connected
+              ? "Choose a file from your computer"
+              : "Connect GitHub to upload documents"}
           </span>
         </button>
 

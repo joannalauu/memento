@@ -273,7 +273,7 @@ export function AskBar({
             <Input
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
-              placeholder={recording ? "Listening…" : "Ask about this pro…"}
+              placeholder={recording ? "Listening…" : "Ask a question about this codebase..."}
               disabled={streaming}
               aria-label="Ask a question about the graph"
               className="h-8 border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent"

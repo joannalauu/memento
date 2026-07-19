@@ -31,6 +31,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { FullPageError, FullPageSpinner } from "@/components/full-page-state"
+import { GapReviewDialog } from "@/features/gap-review/GapReviewDialog"
 import { OrgProvider, useActiveOrg } from "./org-context"
 import { ThemeToggle } from "./ThemeToggle"
 
@@ -51,6 +52,7 @@ export function AppShell() {
           <Outlet />
         </div>
       </div>
+      <GapReviewDialog />
     </OrgProvider>
   )
 }

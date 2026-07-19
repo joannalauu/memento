@@ -50,12 +50,16 @@ function formatDate(iso: string): string {
 }
 
 export function ApiKeySection() {
-  const { orgId } = useActiveOrg()
+  const { org, orgId } = useActiveOrg()
   const { data: keys, isPending, error } = useApiKeys()
   const [revealed, setRevealed] = useState<ApiKeyCreated | null>(null)
 
   // Single-key model: use the first (newest) key scoped to the active org.
   const apiKey = keys?.find((k) => k.orgId === orgId)
+
+  // A key is only useful once the org has repos to reach, so gate generation
+  // on a connected GitHub installation.
+  const connected = org.githubInstallationId != null
 
   return (
     <Card>
@@ -98,7 +102,11 @@ export function ApiKeySection() {
             <RegenerateKeyButton keyId={apiKey.id} onRegenerated={setRevealed} />
           </div>
         ) : (
-          <EmptyState orgId={orgId} onCreated={setRevealed} />
+          <EmptyState
+            orgId={orgId}
+            connected={connected}
+            onCreated={setRevealed}
+          />
         )}
       </CardContent>
 
@@ -109,9 +117,11 @@ export function ApiKeySection() {
 
 function EmptyState({
   orgId,
+  connected,
   onCreated,
 }: {
   orgId: string
+  connected: boolean
   onCreated: (created: ApiKeyCreated) => void
 }) {
   const [open, setOpen] = useState(false)
@@ -141,7 +151,9 @@ function EmptyState({
       <div>
         <p className="text-sm font-medium">No API key yet</p>
         <p className="text-muted-foreground text-sm">
-          Generate one to start using the API.
+          {connected
+            ? "Generate one to start using the API."
+            : "Connect GitHub to generate an API key."}
         </p>
       </div>
       <Dialog
@@ -152,7 +164,7 @@ function EmptyState({
         }}
       >
         <DialogTrigger asChild>
-          <Button>
+          <Button disabled={!connected}>
             <Plus />
             Generate API key
           </Button>

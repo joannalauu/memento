@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field, ValidationError
 from app.backboard.client import Backboard
 from app.backboard.executor import final_text
 from app.backboard.models import MemoryIndex
+from app.file_upload.gap_detection import detect_and_open_gaps
 from app.file_upload.models import DocumentIndexEntry
 from app.github.client import GitHubApp
 from app.github.tools import build_github_toolset
@@ -243,10 +244,19 @@ async def run_document_enrichment(
 ) -> None:
     """BackgroundTasks seam for anchor enrichment — the single place to swap in a
     real queue/worker later. Failures are logged and swallowed: the doc is
-    already in RAG, so a failed enrichment just means no anchor memories yet."""
+    already in RAG, so a failed enrichment just means no anchor memories yet.
+
+    After the doc's decisions are written, `detect_and_open_gaps` checks each
+    against the current code and opens a gap chat where they already disagree, so
+    the reviewer is asked to reconcile stale claims right after upload."""
     try:
-        await enrich_document(
+        written = await enrich_document(
             entry, doc_text=doc_text, org=org, repo=repo, bb=bb, github=github
         )
     except Exception:  # noqa: BLE001 — background task; nothing to surface to
         logger.exception("enrichment failed for document %s", entry.id)
+        return
+    try:
+        await detect_and_open_gaps(written, org=org, repo=repo, bb=bb, github=github)
+    except Exception:  # noqa: BLE001 — gap detection is best-effort augmentation
+        logger.exception("gap detection failed for document %s", entry.id)

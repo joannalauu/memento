@@ -8,7 +8,7 @@
  */
 import { useState } from "react"
 import { Link } from "react-router-dom"
-import { Check, Copy, GitBranch, KeyRound, Plug } from "lucide-react"
+import { Check, Copy, GitBranch, KeyRound, Plug, Webhook } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { useActiveOrg } from "@/components/app-shell/org-context"
@@ -21,25 +21,14 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 
-const SECTIONS = [
-  { id: "connect-mcp", label: "Connect to the MCP", adminOnly: false },
-  { id: "sync-repositories", label: "Sync your repositories", adminOnly: true },
-] as const
-
 const MCP_COMMAND = `claude mcp add --transport http memento https://api.memento-ai.ca/mcp \\
   --header "Authorization: Bearer YOUR_API_KEY"`
+
+const HOOK_COMMAND = `npx -y @memento/hook install --api-key YOUR_API_KEY`
 
 export function GuidePage() {
   const { role } = useActiveOrg()
   const isAdmin = role === "admin"
-  const sections = SECTIONS.filter((s) => isAdmin || !s.adminOnly)
-
-  const scrollTo = (id: string) => () => {
-    document
-      .getElementById(id)
-      ?.scrollIntoView({ behavior: "smooth", block: "start" })
-  }
-
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex max-w-4xl flex-col gap-6 p-6">
@@ -50,21 +39,8 @@ export function GuidePage() {
           </p>
         </div>
 
-        {/* Anchor bar */}
-        <nav className="flex flex-wrap gap-2">
-          {sections.map((s) => (
-            <Button
-              key={s.id}
-              variant="outline"
-              size="sm"
-              onClick={scrollTo(s.id)}
-            >
-              {s.label}
-            </Button>
-          ))}
-        </nav>
-
         <McpSection />
+        <ClaudeHookSection />
         {isAdmin && <GithubSection />}
       </div>
     </div>
@@ -108,6 +84,77 @@ function McpSection() {
               Don't have an API key yet? Create one from the{" "}
               <span className="text-foreground font-medium">API keys</span>{" "}
               section on your home page, then paste it into the command above.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    </section>
+  )
+}
+
+function ClaudeHookSection() {
+  return (
+    <section id="install-claude-hook" className="scroll-mt-6">
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <div className="bg-primary/10 text-primary grid size-10 place-items-center rounded-lg">
+              <Webhook className="size-5" />
+            </div>
+            <div className="space-y-1">
+              <CardTitle>Install Claude hook</CardTitle>
+              <CardDescription>
+                Automatically capture your Claude Code sessions into your
+                knowledge graph when they end.
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <p className="text-sm">
+            The Memento hook plugs into Claude Code's{" "}
+            <code className="text-foreground font-mono">SessionEnd</code> event.
+            Once installed, every session you run in a project is distilled and
+            added to your graph automatically — no manual export needed.
+          </p>
+
+          <p className="text-sm">
+            Run this from the root of the repository you want to capture. Replace{" "}
+            <code className="text-foreground font-mono">YOUR_API_KEY</code> with a
+            key from your{" "}
+            <Link
+              to="/home"
+              className="text-primary underline underline-offset-2"
+            >
+              home page
+            </Link>
+            .
+          </p>
+
+          <CodeBlock code={HOOK_COMMAND} />
+
+          <p className="text-sm">
+            This writes the hook into{" "}
+            <code className="text-foreground font-mono">
+              ./.claude/settings.json
+            </code>{" "}
+            and saves your API key to{" "}
+            <code className="text-foreground font-mono">
+              ~/.claude/memento-hook/config.json
+            </code>{" "}
+            (never committed). To remove it later, run{" "}
+            <code className="text-foreground font-mono">
+              npx @memento/hook uninstall
+            </code>
+            .
+          </p>
+
+          <div className="text-muted-foreground flex items-start gap-2 text-sm">
+            <KeyRound className="mt-0.5 size-4 shrink-0" />
+            <p>
+              You'll need Node.js (which provides{" "}
+              <code className="text-foreground font-mono">npx</code>) installed.
+              The same API key you use for the MCP works here.
             </p>
           </div>
         </CardContent>
