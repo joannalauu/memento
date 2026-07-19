@@ -121,15 +121,37 @@ def _skeleton_files(list_tree_output: str) -> set[str]:
     return files
 
 
+def _coerce_claim_list(data: object) -> list[object]:
+    """Return the claim array from a parsed response. The prompt asks for a bare
+    JSON array, but ``json_output`` mode routinely wraps it in a top-level object
+    (e.g. ``{"claims": [...]}`` / ``{"decisions": [...]}``); unwrap that so an
+    object-shaped response still yields claims instead of being silently dropped.
+    Anything without a list inside yields []."""
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in ("claims", "decisions", "items", "results", "data"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return value
+        # Fall back to the first list-valued field of any key.
+        for value in data.values():
+            if isinstance(value, list):
+                return value
+    return []
+
+
 def _parse_claims(text: str | None) -> list[DecisionClaim]:
-    """Tolerant parse of the extractor's JSON array. Any malformed element is
-    skipped and a non-array/unparseable response yields []; never raises."""
+    """Tolerant parse of the extractor's JSON. Accepts a bare array or an object
+    wrapping one (see ``_coerce_claim_list``); any malformed element is skipped
+    and an unparseable response yields []; never raises."""
     if not text:
         return []
     try:
         data = json.loads(_FENCE_RE.sub("", text.strip()))
     except (json.JSONDecodeError, TypeError):
         return []
+    data = _coerce_claim_list(data)
     if not isinstance(data, list):
         return []
     claims: list[DecisionClaim] = []
@@ -172,7 +194,17 @@ async def extract_decision_claims(
     except Exception:  # noqa: BLE001 — extraction is best-effort, must not raise
         logger.exception("legacy-doc claim extraction call failed")
         return []
-    claims = _parse_claims(final_text(response))
+    raw = final_text(response)
+    claims = _parse_claims(raw)
+    if not claims:
+        # 200 but nothing usable parsed out — log the raw head so a wrapping
+        # shape, prose preamble, or genuine empty answer is diagnosable instead
+        # of silently reading as "no decisions".
+        logger.warning(
+            "extractor returned no usable claims (len=%d); raw head: %.800r",
+            len(raw),
+            raw,
+        )
     for claim in claims:
         claim.files = [f for f in claim.files if f in valid_files]
     return claims[:MAX_CLAIMS]
