@@ -67,7 +67,7 @@ export function OnboardingPage() {
               This is your team's workspace. You'll be its admin.
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-2">
+          <CardContent className="mt-4 flex flex-col gap-2">
             <Label htmlFor="org-name">Organization name</Label>
             <Input
               id="org-name"

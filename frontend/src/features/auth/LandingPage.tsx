@@ -31,7 +31,7 @@ export function LandingPage() {
           </div>
           <CardTitle className="text-xl">Memento</CardTitle>
           <CardDescription>
-            The living knowledge graph for your engineering org.
+            The living knowledge graph for your engineering team.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">

@@ -66,7 +66,7 @@ export function MembersTable({ orgId }: { orgId: string }) {
                     </AvatarFallback>
                   </Avatar>
                   <span className="font-medium">
-                    {m.user.name ?? "—"}
+                    {m.user.name}
                   </span>
                 </div>
               </TableCell>

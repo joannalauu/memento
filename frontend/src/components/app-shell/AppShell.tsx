@@ -4,8 +4,10 @@
  * active-org context to everything below. A signed-in user with no org is sent
  * to onboarding.
  */
-import { Navigate, Outlet, useLocation, useNavigate } from "react-router-dom"
+import { Navigate, NavLink, Outlet } from "react-router-dom"
 import { Home, LogOut, Waypoints } from "lucide-react"
+
+import { cn } from "@/lib/utils"
 
 import { logout, useMe, useMyOrgs, type User } from "@/lib/api"
 import { Button } from "@/components/ui/button"
@@ -60,8 +62,7 @@ function ShellHeader({ me }: { me: User }) {
   return (
     <header className="flex items-center justify-between gap-4 border-b px-4 py-2">
       <div className="flex items-center gap-3">
-        <ContextualNavButton homePath={homePath} />
-
+        <Waypoints className="text-muted-foreground size-5" />
         {orgs.length > 1 ? (
           <Select value={org.id} onValueChange={setOrgId}>
             <SelectTrigger size="sm" className="w-48">
@@ -81,6 +82,8 @@ function ShellHeader({ me }: { me: User }) {
 
       </div>
 
+      <PrimaryNav homePath={homePath} />
+
       <div className="flex items-center gap-1">
         <ThemeToggle />
         <AccountMenu me={me} />
@@ -90,24 +93,30 @@ function ShellHeader({ me }: { me: User }) {
 }
 
 /**
- * Single top-left toggle between the dashboard and the graph: shows "Memory
- * Graph" on the home pages and "Home" while on the graph, always in the same
- * spot. Home routes to admin or member home per the caller's role.
+ * Center-of-header tab nav between the dashboard and the graph. Two labelled
+ * links make it obvious both are pages you can switch between; the active one
+ * is highlighted. Home routes to admin or member home per the caller's role.
  */
-function ContextualNavButton({ homePath }: { homePath: string }) {
-  const location = useLocation()
-  const navigate = useNavigate()
-  const onGraph = location.pathname === "/graph"
+function PrimaryNav({ homePath }: { homePath: string }) {
+  const linkClass = ({ isActive }: { isActive: boolean }) =>
+    cn(
+      "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+      isActive
+        ? "bg-accent text-accent-foreground"
+        : "text-muted-foreground hover:text-foreground",
+    )
 
   return (
-    <Button
-      variant="outline"
-      size="sm"
-      onClick={() => navigate(onGraph ? homePath : "/graph")}
-    >
-      {onGraph ? <Home /> : <Waypoints />}
-      {onGraph ? "Home" : "Memory Graph"}
-    </Button>
+    <nav className="flex items-center gap-1">
+      <NavLink to={homePath} className={linkClass}>
+        <Home className="size-4" />
+        Home
+      </NavLink>
+      <NavLink to="/graph" className={linkClass}>
+        <Waypoints className="size-4" />
+        Memory Graph
+      </NavLink>
+    </nav>
   )
 }
 
