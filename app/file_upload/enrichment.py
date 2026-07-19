@@ -49,9 +49,12 @@ MAX_CLAIMS = 40  # ceiling on memories written per doc
 # default: this is a closed-world, forced-JSON call, and a default model that
 # doesn't support json_output makes Backboard reject the request (a 400 that this
 # module swallows into zero decisions). Anthropic Sonnet handles the JSON contract
-# and the large doc+tree prompt reliably.
+# and the large doc+tree prompt reliably. The model MUST be one Backboard's
+# `/models` endpoint lists for this account (an unsupported name comes back as a
+# 200 whose body is an "LLM Error: Model ... is not supported" string, which
+# parses to zero claims) — swap only for another listed model.
 EXTRACTION_LLM_PROVIDER = "anthropic"
-EXTRACTION_MODEL_NAME = "claude-sonnet-4-20250514"
+EXTRACTION_MODEL_NAME = "claude-sonnet-4-5-20250929"
 
 # Backboard rejects send_message to an assistant while ANY of its documents is
 # still indexing. Enrichment fires right after upload, so the just-uploaded doc
