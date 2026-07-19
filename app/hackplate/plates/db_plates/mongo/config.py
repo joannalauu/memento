@@ -71,7 +71,10 @@ class MongoPlate(DatabasePlate):
         )
         if s.ssl_required:
             url += "/?tls=true"
-        self.client = AsyncMongoClient(url)
+        # tz_aware: MongoDB stores datetimes as UTC but returns them naive by
+        # default, which breaks comparisons against datetime.now(timezone.utc)
+        # (e.g. TTL/expiry checks on install states and org invites).
+        self.client = AsyncMongoClient(url, tz_aware=True)
         self.db = self.client[s.name]
 
         self.document_models.append(get_user_model())

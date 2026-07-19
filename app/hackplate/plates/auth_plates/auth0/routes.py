@@ -1,5 +1,6 @@
 import asyncio
 import secrets
+import logging
 
 from collections.abc import Callable
 from urllib.parse import urlencode
@@ -14,6 +15,8 @@ from app.hackplate.user.schemas import UserCreate
 from app.hackplate.plates.auth_plates.auth0.env_settings import Auth0Settings
 
 from app.hackplate.hackplate_types import HackplateRequest
+
+logger = logging.getLogger(__name__)
 
 
 def auth0_router_factory(
@@ -89,7 +92,8 @@ def auth0_router_factory(
                             sub=sub,
                         )
                     )
-                except Exception:
+                except Exception as e:
+                    logger.info(e)
                     user = await user_manager.user_db.get_by_email(email)
                     if not user:
                         raise HTTPException(
