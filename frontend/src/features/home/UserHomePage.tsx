@@ -28,7 +28,14 @@ export function UserHomePage() {
         <div>
           <h1 className="text-xl font-semibold">{greeting}</h1>
           <p className="text-muted-foreground text-sm">
-            You're a member of {org.name}.
+            You're a member of {org.name}. Get started with our{" "}
+            <Link
+              to="/guide"
+              className="underline underline-offset-2 transition-colors hover:text-primary"
+            >
+              Guide
+            </Link>
+            .
           </p>
         </div>
 
@@ -40,7 +47,7 @@ export function UserHomePage() {
                   <Waypoints className="size-5" />
                 </div>
                 <div className="space-y-1">
-                  <CardTitle>Knowledge graph</CardTitle>
+                  <CardTitle>Memory graph</CardTitle>
                   <CardDescription>
                     Explore your org's decisions, files, and features.
                   </CardDescription>

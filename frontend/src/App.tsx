@@ -11,6 +11,7 @@ import { OnboardingPage } from "@/features/auth/OnboardingPage"
 import { AdminHomePage } from "@/features/admin/AdminHomePage"
 import { UserHomePage } from "@/features/home/UserHomePage"
 import { GraphPage } from "@/features/graph/GraphPage"
+import { GuidePage } from "@/features/guide/GuidePage"
 
 const router = createBrowserRouter([
   { path: "/", element: <RootPage /> },
@@ -25,6 +26,7 @@ const router = createBrowserRouter([
           { path: "/admin", element: <AdminHomePage /> },
           { path: "/home", element: <UserHomePage /> },
           { path: "/graph", element: <GraphPage /> },
+          { path: "/guide", element: <GuidePage /> },
         ],
       },
     ],

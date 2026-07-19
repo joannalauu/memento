@@ -4,7 +4,7 @@
  * own home.
  */
 import { useEffect } from "react"
-import { Navigate, useSearchParams } from "react-router-dom"
+import { Link, Navigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 
 import { useActiveOrg } from "@/components/app-shell/org-context"
@@ -50,7 +50,14 @@ export function AdminHomePage() {
         <div>
           <h1 className="text-xl font-semibold">{org.name}</h1>
           <p className="text-muted-foreground text-sm">
-            Manage your organization's members and access.
+            Manage your organization. Get started with our{" "}
+            <Link
+              to="/guide"
+              className="underline underline-offset-2 transition-colors hover:text-primary"
+            >
+              Guide
+            </Link>
+            .
           </p>
         </div>
 

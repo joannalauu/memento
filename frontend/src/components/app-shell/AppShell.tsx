@@ -5,7 +5,7 @@
  * to onboarding.
  */
 import { Navigate, NavLink, Outlet } from "react-router-dom"
-import { Home, LogOut, Waypoints } from "lucide-react"
+import { Home, LogOut, MapIcon, Waypoints } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
@@ -114,6 +114,10 @@ function PrimaryNav({ homePath }: { homePath: string }) {
       <NavLink to="/graph" className={linkClass}>
         <Waypoints className="size-4" />
         Graph
+      </NavLink>
+      <NavLink to="/guide" className={linkClass}>
+        <MapIcon className="size-4" />
+        Guide
       </NavLink>
     </nav>
   )

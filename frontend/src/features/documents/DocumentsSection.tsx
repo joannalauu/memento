@@ -76,7 +76,7 @@ export function DocumentsSection() {
       <CardHeader>
         <CardTitle>Legacy documents</CardTitle>
         <CardDescription>
-          Upload existing docs to fold their knowledge into the graph.
+          Upload existing docs to fold their knowledge into shared memory.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
