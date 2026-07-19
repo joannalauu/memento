@@ -284,7 +284,7 @@ async def _related_decisions(
     return [
         RelatedDecision(
             id=ids.decision_id(d.id),
-            label=ids.short_label(d.contentSnapshot),
+            label=ids.first_line(d.contentSnapshot),
             prNumber=d.prNumber,
             author=names.get(d.authorUserId) if d.authorUserId else None,
             date=d.createdAt,

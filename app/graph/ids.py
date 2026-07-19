@@ -21,10 +21,16 @@ from app.graph.schemas import NodeType
 LABEL_MAX = 60
 
 
+def first_line(content: str) -> str:
+    """First line of the content snapshot, untruncated — for detail-panel rows
+    that wrap the full title rather than clip it to one canvas-width line."""
+    stripped = content.strip()
+    return stripped.splitlines()[0] if stripped else "(empty)"
+
+
 def short_label(content: str) -> str:
     """First line of the content snapshot, truncated for canvas labels."""
-    stripped = content.strip()
-    first = stripped.splitlines()[0] if stripped else "(empty)"
+    first = first_line(content)
     return first if len(first) <= LABEL_MAX else first[: LABEL_MAX - 1] + "…"
 
 
