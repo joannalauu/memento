@@ -5,7 +5,7 @@
  * to GitHub's install page; once connected it lists the synced repositories and
  * offers a "Manage repositories" button to change the selection.
  *
- * The connect flow is a full-page navigation: the returned install URL points at
+ * The connect flow opens in a new tab: the returned install URL points at
  * github.com, and GitHub redirects back through the backend `/github/setup`
  * endpoint (which binds the installation and syncs repos) to
  * `GITHUB_POST_INSTALL_REDIRECT_URL`. The frontend is not involved in the
@@ -63,17 +63,17 @@ function ConnectButton({ orgId }: { orgId: string }) {
 
   const onClick = () => {
     connect.mutate(orgId, {
-      // Full-page navigation to github.com — GitHub redirects back through the
-      // backend, so we want the SPA to reload fresh in the same tab (not a new
-      // tab, not a client route).
+      // Open github.com in a new tab. GitHub redirects back through the backend
+      // `/github/setup` endpoint, so the install completes in that tab; this tab
+      // stays put.
       onSuccess: ({ installUrl }) => {
-        window.location.href = installUrl
+        window.open(installUrl, "_blank", "noopener,noreferrer")
       },
     })
   }
 
-  // Stay pending through success too: the page is about to navigate away.
-  const pending = connect.isPending || connect.isSuccess
+  // The tab isn't navigating away, so only reflect the in-flight request.
+  const pending = connect.isPending
 
   return (
     <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed p-6 text-center">
@@ -102,16 +102,16 @@ function ManageReposButton({ orgId }: { orgId: string }) {
 
   const onClick = () => {
     connect.mutate(orgId, {
-      // Same full-page navigation as the initial connect: GitHub sends an
-      // already-installed App to its configure page, where the admin edits the
-      // repository selection. The page is about to unload, so stay pending.
+      // Same new-tab navigation as the initial connect: GitHub sends an
+      // already-installed App to its configure page in a new tab, where the
+      // admin edits the repository selection.
       onSuccess: ({ installUrl }) => {
-        window.location.href = installUrl
+        window.open(installUrl, "_blank", "noopener,noreferrer")
       },
     })
   }
 
-  const pending = connect.isPending || connect.isSuccess
+  const pending = connect.isPending
 
   return (
     <Button
