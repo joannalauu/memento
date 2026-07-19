@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
-from typing import Annotated, Literal
+from typing import Literal
 
-from beanie import Indexed, Document, PydanticObjectId
+from beanie import Document, PydanticObjectId
 from pydantic import Field, field_validator, BaseModel
 from pymongo import IndexModel
 
@@ -16,7 +16,7 @@ class User(AbstractUserDocument):
 
     # unique + sparse: lets multiple users have no githubUsername (email/password
     # or google-only accounts) without tripping the unique constraint on None
-    githubUsername: Annotated[str | None, Indexed(unique=True, sparse=True)] = None
+    githubUsername: str | None = None
 
     createdAt: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -31,7 +31,7 @@ class User(AbstractUserDocument):
                 "githubUsername",
                 name="github_username_unique",
                 unique=True,
-                sparse=True,
+                partialFilterExpression={"githubUsername": {"$type": "string"}},
             ),
         ]
 
