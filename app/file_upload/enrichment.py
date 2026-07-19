@@ -38,7 +38,6 @@ from app.file_upload.crud import (
     normalize_document_status,
     set_document_enrichment_status,
 )
-from app.file_upload.gap_detection import detect_and_open_gaps
 from app.file_upload.models import DocumentIndexEntry
 from app.github.client import GitHubApp
 from app.github.tools import build_github_toolset
@@ -330,11 +329,7 @@ async def run_document_enrichment(
 ) -> None:
     """BackgroundTasks seam for anchor enrichment — the single place to swap in a
     real queue/worker later. Failures are logged and swallowed: the doc is
-    already in RAG, so a failed enrichment just means no anchor memories yet.
-
-    After the doc's decisions are written, `detect_and_open_gaps` checks each
-    against the current code and opens a gap chat where they already disagree, so
-    the reviewer is asked to reconcile stale claims right after upload."""
+    already in RAG, so a failed enrichment just means no anchor memories yet."""
     # The doc was uploaded moments ago and is still indexing; Backboard blocks
     # every send_message to the assistant until it (and any sibling) finishes, so
     # wait for the RAG index to settle before enrichment's extraction call.
@@ -348,23 +343,6 @@ async def run_document_enrichment(
         await set_document_enrichment_status(entry.id, "failed")
         return
 
-    # Surface the extracted decisions immediately: the memories are already
-    # written, so record the count and flip the phase to "done" NOW, before the
-    # slower, best-effort gap-detection pass. Gap detection makes one LLM judge
-    # call per anchored memory, so gating the decision count on it would leave the
-    # UI showing "Analyzing" / zero decisions for minutes even though the
-    # decisions exist. Gaps are augmentation and update separately below.
     await set_document_enrichment_status(
-        entry.id, "done", decisions_written=len(written), gaps_opened=0
+        entry.id, "done", decisions_written=len(written)
     )
-    try:
-        gaps = await detect_and_open_gaps(
-            written, org=org, repo=repo, bb=bb, github=github
-        )
-    except Exception:  # noqa: BLE001 — gap detection is best-effort augmentation
-        logger.exception("gap detection failed for document %s", entry.id)
-        return
-    # Only re-touch the entry if gap detection actually opened something, so the
-    # common (zero-gap) path costs no extra write.
-    if gaps:
-        await set_document_enrichment_status(entry.id, "done", gaps_opened=gaps)

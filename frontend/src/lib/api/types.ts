@@ -234,9 +234,9 @@ export interface NodeDetail {
 export type DocumentKind = "upload" | "decision_digest"
 export type DocumentStatus = "pending" | "processing" | "indexed" | "error"
 /**
- * Background enrichment + gap-detection phase, separate from `status` (which
- * only tracks RAG indexing — a doc reads "indexed" while this is still
- * "enriching"). "none" for docs that aren't repo-scoped and so never enrich.
+ * Background enrichment phase, separate from `status` (which only tracks RAG
+ * indexing — a doc reads "indexed" while this is still "enriching"). "none"
+ * for docs that aren't repo-scoped and so never enrich.
  */
 export type EnrichmentStatus = "none" | "enriching" | "done" | "failed"
 
@@ -251,7 +251,6 @@ export interface Document {
   enrichmentStatus: EnrichmentStatus
   /** Enrichment outcome, meaningful once `enrichmentStatus === "done"`. */
   decisionsWritten: number
-  gapsOpened: number
   createdAt: ISODateString
   /** Present once `status === "indexed"`. */
   chunkCount: number | null
@@ -259,43 +258,4 @@ export interface Document {
   /** Present once `status === "error"`. */
   error: string | null
   recommendation: string | null
-}
-
-// ─── gap chats (app/gap_chat/schemas.py, app/gap_chat/models.py) ─────────────
-
-export type GapChatStatus = "open" | "verified" | "superseded" | "dismissed"
-export type GapResolution = "verified" | "superseded"
-
-export interface GapMessage {
-  role: "assistant" | "user"
-  text: string
-  createdAt: ISODateString
-}
-
-export interface GapChat {
-  id: ObjectId
-  orgId: ObjectId
-  repoId: ObjectId
-  bbMemoryId: string
-  memoryContent: string
-  changedFiles: string[]
-  prNumber: number | null
-  triggerStatus: "stale" | "gap"
-  messages: GapMessage[]
-  status: GapChatStatus
-  supersededByMemoryId: string | null
-  resolvedAt: ISODateString | null
-  createdAt: ISODateString
-}
-
-export interface AnswerRequest {
-  answer: string
-}
-
-export interface AnswerResult {
-  chat: GapChat
-  resolution: GapResolution
-  supersededByMemoryId: string | null
-  /** Populated only for voice answers. */
-  transcript: string | null
 }

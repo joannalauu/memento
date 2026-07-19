@@ -5,17 +5,18 @@
  * while anything is still processing.
  */
 import { useEffect, useRef, useState, type ChangeEvent } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { FileText, Loader2, Upload } from "lucide-react"
 import { toast } from "sonner"
 
 import {
+  queryKeys,
   type Document,
   useDocuments,
   useOrgRepos,
   useUploadDocument,
 } from "@/lib/api"
 import { useActiveOrg } from "@/components/app-shell/org-context"
-import { useUploadSignal } from "@/features/gap-review/upload-signal"
 import { Badge } from "@/components/ui/badge"
 import {
   Card,
@@ -35,9 +36,9 @@ import { Skeleton } from "@/components/ui/skeleton"
 
 function statusBadge(doc: Document) {
   if (doc.status === "error") return <Badge variant="destructive">Error</Badge>
-  // Indexed into RAG, but the background enrichment + gap-detection job is still
-  // running (the indexing `status` doesn't reflect it). Surface it as still
-  // working so this row matches what the gap-review dialog is waiting on.
+  // Indexed into RAG, but the background enrichment job is still running (the
+  // indexing `status` doesn't reflect it). Surface it as still working so the
+  // row doesn't read "Indexed" while decisions are still being extracted.
   if (doc.status === "indexed" && doc.enrichmentStatus === "enriching") {
     return (
       <Badge variant="secondary">
@@ -59,12 +60,9 @@ function statusBadge(doc: Document) {
 /** One-line summary of what a finished doc's enrichment produced. */
 function enrichmentSummary(doc: Document): string {
   if (doc.decisionsWritten === 0) return "No decisions found"
-  const decisions = `${doc.decisionsWritten} ${
+  return `${doc.decisionsWritten} ${
     doc.decisionsWritten === 1 ? "decision" : "decisions"
   }`
-  return doc.gapsOpened > 0
-    ? `${decisions} · ${doc.gapsOpened} to review`
-    : decisions
 }
 
 function formatDate(iso: string): string {
@@ -77,16 +75,16 @@ function formatDate(iso: string): string {
 
 export function DocumentsSection() {
   const { org, orgId } = useActiveOrg()
+  const qc = useQueryClient()
   const inputRef = useRef<HTMLInputElement>(null)
-  const { notifyUpload } = useUploadSignal()
 
   // Uploading requires a connected GitHub installation — the org's repos are
   // the context legacy docs get folded into, so gate the action until then.
   const connected = org.githubInstallationId != null
 
-  // A doc must be scoped to a repo for the backend to enrich it (extract its
-  // decisions) and detect gaps against the code — that's what raises the review
-  // questions. Default to the first repo; let the user pick when there's more.
+  // A doc must be scoped to a repo for the backend to enrich it — extract its
+  // decisions and write them to the knowledge graph. Default to the first repo;
+  // let the user pick when there's more.
   const { data: repos } = useOrgRepos(orgId, { enabled: connected })
   const [repoId, setRepoId] = useState<string | undefined>()
   useEffect(() => {
@@ -108,13 +106,35 @@ export function DocumentsSection() {
         : false,
   })
 
+  // When a doc's enrichment wraps up, its extracted decisions are already in
+  // the graph — pull it fresh so the new memory nodes show without the wait for
+  // the next scheduled refetch, and report what the doc produced.
+  const enriching = (docs ?? []).some((d) => d.enrichmentStatus === "enriching")
+  const wasEnrichingRef = useRef(false)
+  useEffect(() => {
+    if (enriching) {
+      wasEnrichingRef.current = true
+      return
+    }
+    if (!wasEnrichingRef.current) return
+    wasEnrichingRef.current = false
+    qc.invalidateQueries({ queryKey: queryKeys.graph.all })
+    const done = (docs ?? [])
+      .filter((d) => d.enrichmentStatus === "done")
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+    if (done) {
+      toast.success(
+        done.decisionsWritten > 0
+          ? `Added ${done.decisionsWritten} ${
+              done.decisionsWritten === 1 ? "memory node" : "memory nodes"
+            } to the graph.`
+          : "No decisions were found in your documents.",
+      )
+    }
+  }, [enriching, docs, qc])
+
   const upload = useUploadDocument(orgId, {
-    onSuccess: (doc) => {
-      toast.success(`Uploaded ${doc.filename}`)
-      // Tell the gap-review dialog to pop open with a processing spinner while
-      // the backend enriches the doc and generates any review questions.
-      notifyUpload()
-    },
+    onSuccess: (doc) => toast.success(`Uploaded ${doc.filename}`),
     onError: (err) => toast.error(err.message || "Upload failed."),
   })
 

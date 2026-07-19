@@ -6,4 +6,3 @@ import app.claude_hook.models  # noqa: F401
 import app.backboard.models  # noqa: F401
 import app.github.models  # noqa: F401
 import app.job_queue.models  # noqa: F401
-import app.gap_chat.models  # noqa: F401

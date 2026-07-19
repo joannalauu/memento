@@ -37,7 +37,6 @@ from app.distillation import matching
 from app.distillation.distill import distill
 from app.distillation.memory_write import write_distillation
 from app.distillation.schemas import DistillationResult, StaleMemoryFlag
-from app.gap_chat.service import open_gap_chat
 from app.github.client import GitHubApp, GitHubError
 from app.github.history import RepoHistory
 from app.github.tools import GitHubToolset
@@ -140,7 +139,7 @@ async def _anchored_memories(repo_id, anchors: Anchors) -> list[MemoryIndex]:
 
 
 async def _staleness_flags_for_gap(
-    job: PipelineJob, repo: Repo, *, gh: GitHubApp, bb: Backboard, org: Org
+    job: PipelineJob, repo: Repo, *, gh: GitHubApp
 ) -> list[StaleMemoryFlag]:
     """Best-effort: a merge changed these files but no session was captured, so
     any prior memory about them may now be out of date. Run staleness_check on
@@ -155,11 +154,6 @@ async def _staleness_flags_for_gap(
     otherwise sit on its last cached verdict indefinitely. Persisted as one
     bulk_write, not a save() per memory — the GitHub checks above are already
     N round trips; the cache write doesn't need to be too.
-
-    For non-fresh ``legacy_doc`` memories this also opens a by-interview gap chat
-    (app/gap_chat): the code moved here with nothing captured, so ask the one
-    "is the old doc still accurate?" question and let the answer verify or
-    supersede it. Chat-opening failures are swallowed per memory.
     """
     try:
         toolset = GitHubToolset(
@@ -206,21 +200,6 @@ async def _staleness_flags_for_gap(
             if verdict.status == "fresh":
                 continue
             flags.append(StaleMemoryFlag(bbMemoryId=memory.bbMemoryId, verdict=verdict))
-            # Lazily refresh legacy knowledge exactly where code is changing: ask
-            # the one verification question. The merged head is the new baseline.
-            try:
-                await open_gap_chat(
-                    memory,
-                    verdict,
-                    org=org,
-                    bb=bb,
-                    trigger_commit_sha=job.headSha,
-                    pr_number=job.prNumber,
-                )
-            except Exception:  # noqa: BLE001 — a chat failure must not lose the flag
-                logger.warning(
-                    "could not open gap chat for %s", memory.bbMemoryId, exc_info=True
-                )
         if cache_updates:
             await MemoryIndex.get_pymongo_collection().bulk_write(
                 cache_updates, ordered=False
@@ -315,7 +294,7 @@ async def _distill_phase(
             detail += f", {unnormalized} un-normalized session(s) on branch"
         # The merge changed code with nothing captured — flag prior memories on
         # those files that have now gone stale, so the gap isn't silent.
-        flags = await _staleness_flags_for_gap(job, repo, gh=gh, bb=bb, org=org)
+        flags = await _staleness_flags_for_gap(job, repo, gh=gh)
         if flags:
             detail += f", {len(flags)} prior memory(ies) on changed files now stale/gap"
         await _finish_no_sessions(job, detail, flags)

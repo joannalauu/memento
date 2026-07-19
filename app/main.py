@@ -1,7 +1,6 @@
 from app.api_auth.routes import router as api_auth_router
 from app.claude_hook.routes import router as claude_hook_router
 from app.file_upload.routes import router as documents_router
-from app.gap_chat.routes import router as gap_chat_router
 from app.github.routes import router as github_router
 from app.graph.ask import router as graph_ask_router
 from app.graph.live import router as graph_live_router
@@ -27,7 +26,6 @@ def register_routes(app: Hackplate) -> None:
     app.include_router(graph_ask_router, prefix="/orgs", tags=["graph"])
     app.include_router(claude_hook_router, prefix="/ingest", tags=["ingest"])
     app.include_router(documents_router, prefix="/documents", tags=["documents"])
-    app.include_router(gap_chat_router, prefix="/gap-chats", tags=["gap-chats"])
     app.include_router(github_router, prefix="/github", tags=["github"])
     app.include_router(mcp_router, prefix="/mcp", tags=["mcp"])
 

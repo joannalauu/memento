@@ -31,8 +31,6 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { FullPageError, FullPageSpinner } from "@/components/full-page-state"
-import { GapReviewDialog } from "@/features/gap-review/GapReviewDialog"
-import { UploadSignalProvider } from "@/features/gap-review/upload-signal"
 import { OrgProvider, useActiveOrg } from "./org-context"
 import { ThemeToggle } from "./ThemeToggle"
 
@@ -47,15 +45,12 @@ export function AppShell() {
 
   return (
     <OrgProvider orgs={orgs.data} me={me.data}>
-      <UploadSignalProvider>
-        <div className="bg-background text-foreground flex h-screen flex-col">
-          <ShellHeader me={me.data} />
-          <div className="min-h-0 flex-1 overflow-hidden">
-            <Outlet />
-          </div>
+      <div className="bg-background text-foreground flex h-screen flex-col">
+        <ShellHeader me={me.data} />
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <Outlet />
         </div>
-        <GapReviewDialog />
-      </UploadSignalProvider>
+      </div>
     </OrgProvider>
   )
 }

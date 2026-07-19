@@ -263,8 +263,7 @@ async def transcribe_graph_question_endpoint(
     drop into the input — the user still submits it themselves. Only a member of
     the org may transcribe.
 
-    Mirrors the gap-chat voice path (app/gap_chat/routes.py), with one
-    difference: this surface keeps no persistent thread, and Backboard's STT is
+    This surface keeps no persistent thread, and Backboard's STT is
     thread-scoped, so it uses a throwaway thread and deletes it once done."""
     org = await _require_member(org_id, user)
 

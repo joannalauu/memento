@@ -62,20 +62,17 @@ async def set_document_enrichment_status(
     status: Literal["none", "enriching", "done", "failed"],
     *,
     decisions_written: int | None = None,
-    gaps_opened: int | None = None,
 ) -> None:
-    """Persist a document's enrichment/gap-detection phase, addressing it by id
-    and writing just those fields so a concurrent indexing-status refresh isn't
-    clobbered. Pass the counts when moving to "done" to record the outcome.
-    No-ops if the entry was deleted mid-enrichment."""
+    """Persist a document's enrichment phase, addressing it by id and writing
+    just those fields so a concurrent indexing-status refresh isn't clobbered.
+    Pass the count when moving to "done" to record the outcome. No-ops if the
+    entry was deleted mid-enrichment."""
     entry = await DocumentIndexEntry.get(doc_id)
     if entry is None:
         return
     updates: dict[object, object] = {DocumentIndexEntry.enrichmentStatus: status}
     if decisions_written is not None:
         updates[DocumentIndexEntry.decisionsWritten] = decisions_written
-    if gaps_opened is not None:
-        updates[DocumentIndexEntry.gapsOpened] = gaps_opened
     await entry.set(updates)
 
 

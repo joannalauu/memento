@@ -5,7 +5,7 @@
  * and consistent. Keys are hierarchical: invalidating `orgs.all` also matches
  * every nested org query (list, detail, members, repos, …).
  */
-import type { GraphFilters, GapChatStatus, ObjectId } from "./types"
+import type { GraphFilters, ObjectId } from "./types"
 
 export const queryKeys = {
   users: {
@@ -51,15 +51,5 @@ export const queryKeys = {
     details: () => [...queryKeys.documents.all, "detail"] as const,
     detail: (orgId: ObjectId, docId: ObjectId) =>
       [...queryKeys.documents.details(), orgId, docId] as const,
-  },
-
-  gapChats: {
-    all: ["gap-chats"] as const,
-    lists: () => [...queryKeys.gapChats.all, "list"] as const,
-    list: (orgId: ObjectId, status?: GapChatStatus) =>
-      [...queryKeys.gapChats.lists(), orgId, status ?? "all"] as const,
-    details: () => [...queryKeys.gapChats.all, "detail"] as const,
-    detail: (orgId: ObjectId, chatId: ObjectId) =>
-      [...queryKeys.gapChats.details(), orgId, chatId] as const,
   },
 } as const
