@@ -59,7 +59,13 @@ class BackboardSettings(BaseSettings):
 
     api_key: str
     base_url: str = "https://app.backboard.io/api"
-    timeout: int = 30
+    # Applies to every non-streaming call (the SDK has no per-request override).
+    # LLM-generation calls — legacy-doc enrichment, the consistency judge, PR
+    # distillation, gap detection — routinely take longer than a chat round-trip:
+    # a full forced-JSON extraction over a doc + repo tree can run past 30s and
+    # then fails as "Request timed out" (silently → zero decisions). Default high;
+    # override with BACKBOARD_TIMEOUT for a faster ceiling on interactive paths.
+    timeout: int = 180
     # Speech-to-text provider/model for voice answers (BACKBOARD_STT_*). Backboard
     # routes STT through ElevenLabs by default; override for a different model.
     stt_provider: str = "elevenlabs"
