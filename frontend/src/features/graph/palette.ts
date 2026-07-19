@@ -25,6 +25,13 @@ export interface Theme {
   linkStrong: string; // superseded_by, so the dash reads
   ring: string; // selected-node outline
   labelInk: string; // node label text
+  // Live-traversal highlight (T4.6). Warm accents that read against every
+  // categorical node color on both canvases; entry (semantic landing) is the
+  // brightest, hop (structural) a step cooler, edge emphasizes the traversed link.
+  highlightEntry: string;
+  highlightHop: string;
+  highlightEdge: string;
+  highlightCommunity: string; // zoom-to-overview landing — dormant until T4b
 }
 
 const LIGHT_THEME: Theme = {
@@ -33,6 +40,10 @@ const LIGHT_THEME: Theme = {
   linkStrong: "#8a8a84",
   ring: "#0a0a0a",
   labelInk: "#4a4a46",
+  highlightEntry: "#f59e0b", // amber-gold — the landing beat
+  highlightHop: "#e0526e", // rose — structural step
+  highlightEdge: "#f59e0b",
+  highlightCommunity: "#7c3aed", // violet
 };
 
 const DARK_THEME: Theme = {
@@ -41,6 +52,10 @@ const DARK_THEME: Theme = {
   linkStrong: "#6a6a66",
   ring: "#fafafa",
   labelInk: "#b5b5b0",
+  highlightEntry: "#fbbf24", // brighter on near-black
+  highlightHop: "#f472a0",
+  highlightEdge: "#fbbf24",
+  highlightCommunity: "#a78bfa",
 };
 
 export function isDark(): boolean {

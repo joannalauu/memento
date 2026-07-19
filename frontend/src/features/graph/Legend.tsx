@@ -30,6 +30,21 @@ export function Legend({ themeKey }: { themeKey: number }) {
           </svg>
           <span className="text-muted-foreground">superseded by</span>
         </li>
+        {/* Live-traversal highlight legend (T4.6). */}
+        <li className="flex items-center gap-2 pt-1">
+          <span
+            className="inline-block size-3 rounded-full"
+            style={{ boxShadow: `0 0 0 2px ${theme.highlightEntry}` }}
+          />
+          <span className="text-muted-foreground">entry (landing)</span>
+        </li>
+        <li className="flex items-center gap-2">
+          <span
+            className="inline-block size-3 rounded-full"
+            style={{ boxShadow: `0 0 0 2px ${theme.highlightHop}` }}
+          />
+          <span className="text-muted-foreground">hop</span>
+        </li>
       </ul>
     </div>
   );

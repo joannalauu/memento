@@ -25,7 +25,7 @@ export function LandingPage() {
       </div>
 
       <Card className="w-full max-w-sm">
-        <CardHeader className="items-center text-center">
+        <CardHeader className="justify-items-center text-center">
           <div className="bg-primary/10 text-primary mb-2 grid size-12 place-items-center rounded-xl">
             <Waypoints className="size-6" />
           </div>

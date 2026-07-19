@@ -2,30 +2,67 @@
  * The knowledge-graph view, now a route inside the app shell. The shell owns the
  * header and org selection; this page reads the active org from context and
  * renders the force graph plus the node detail panel.
+ *
+ * Live traversal pipeline (T4.6 + T4.7): the WS transport (T4.6a) feeds a pacing
+ * buffer that releases hops at a legible cadence into the highlight overlay,
+ * which lights up nodes/edges over the already-rendered static graph.
  */
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
+import type { ForceGraphMethods } from "react-force-graph-2d"
 
-import { useOrgGraph } from "@/lib/api"
+import { queryKeys, useOrgGraph } from "@/lib/api"
 import { useActiveOrg } from "@/components/app-shell/org-context"
 import { useTheme } from "@/components/app-shell/theme-context"
 import { GraphView } from "./GraphView"
 import { Legend } from "./Legend"
 import { NodeDetailPanel } from "./NodeDetailPanel"
-import type { GraphNode } from "./types"
+import type { GraphLink, GraphNode } from "./types"
+import { useLiveHighlight } from "./useLiveHighlight"
+import { useLiveTraversal } from "./useLiveTraversal"
+import { usePacingBuffer } from "./pacingBuffer"
 
 export function GraphPage() {
   const { orgId } = useActiveOrg()
   const { version: themeKey } = useTheme()
   const [selected, setSelected] = useState<GraphNode | null>(null)
+  const qc = useQueryClient()
 
   const { data: graph, error: graphError } = useOrgGraph(orgId)
 
   const loading = !graph && !graphError
 
-  // Clear the selected node whenever the active org changes.
+  // Shared with the live layer so it can drive zoom/particles imperatively.
+  const graphRef = useRef<ForceGraphMethods<GraphNode, GraphLink> | undefined>(
+    undefined,
+  )
+  const nodesById = useMemo(
+    () => new Map((graph?.nodes ?? []).map((n) => [n.id, n])),
+    [graph],
+  )
+
+  // Transport → pacing buffer → highlight overlay → GraphView.
+  const { highlightRef, apply, reset, renderTick, isTracing } =
+    useLiveHighlight({ graphRef, nodesById })
+  const { enqueue, clear } = usePacingBuffer({ onRelease: apply })
+
+  const { status: liveStatus } = useLiveTraversal(orgId, {
+    enabled: !!graph,
+    onEvent: enqueue,
+    // Missed too much to reconcile: drop the in-flight trace and refetch static.
+    onRefresh: () => {
+      clear()
+      reset()
+      qc.invalidateQueries({ queryKey: queryKeys.graph.all })
+    },
+  })
+
+  // Clear selection + any in-flight live state whenever the active org changes.
   useEffect(() => {
     setSelected(null)
-  }, [orgId])
+    clear()
+    reset()
+  }, [orgId, clear, reset])
 
   // Hop to another node by id (from the detail panel), keeping the object
   // reference the force graph knows so the selection ring lands on it.
@@ -60,8 +97,17 @@ export function GraphPage() {
               onSelect={setSelected}
               onClear={() => setSelected(null)}
               themeKey={themeKey}
+              graphRef={graphRef}
+              highlightRef={highlightRef}
+              renderTick={renderTick}
+              readOnly={isTracing}
             />
             <Legend themeKey={themeKey} />
+            {(liveStatus === "following" || liveStatus === "waiting") && (
+              <div className="text-muted-foreground bg-background/70 pointer-events-none absolute top-3 right-3 rounded-full border px-2.5 py-1 text-xs backdrop-blur">
+                {liveStatus === "following" ? "● live" : "waiting for session…"}
+              </div>
+            )}
           </>
         )}
       </div>
