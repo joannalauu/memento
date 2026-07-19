@@ -22,7 +22,11 @@ import re
 
 from pydantic import ValidationError
 
-from app.backboard.client import Backboard
+from app.backboard.client import (
+    CLOSED_WORLD_LLM_PROVIDER,
+    CLOSED_WORLD_MODEL_NAME,
+    Backboard,
+)
 from app.backboard.executor import final_text
 from app.backboard.models import Anchors
 from app.context_engine.schemas import (
@@ -192,7 +196,8 @@ async def check_consistency(
         assistant_id=assistant_id,
         memory="off",
         json_output=True,
-        model_name=model_name,
+        llm_provider=CLOSED_WORLD_LLM_PROVIDER,
+        model_name=model_name or CLOSED_WORLD_MODEL_NAME,
     )
     verdict = _parse_verdict(final_text(response))
     if verdict is None:

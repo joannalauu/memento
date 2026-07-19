@@ -29,7 +29,11 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel, ValidationError
 
-from app.backboard.client import Backboard
+from app.backboard.client import (
+    CLOSED_WORLD_LLM_PROVIDER,
+    CLOSED_WORLD_MODEL_NAME,
+    Backboard,
+)
 from app.backboard.executor import final_text
 from app.backboard.models import MemoryIndex
 from app.context_engine.schemas import StalenessVerdict
@@ -150,6 +154,8 @@ async def _judge_memory(
             assistant_id=org.bbAssistantId,
             memory="off",
             json_output=True,
+            llm_provider=CLOSED_WORLD_LLM_PROVIDER,
+            model_name=CLOSED_WORLD_MODEL_NAME,
         )
     except Exception:  # noqa: BLE001 — best-effort; a hiccup means "no gap"
         logger.exception("gap-detection judge call failed for %s", memory.bbMemoryId)

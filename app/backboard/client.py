@@ -48,6 +48,15 @@ _MEMORY_OP_POLL_TRIES = 20  # ~10s ceiling before giving up and proceeding
 _MEMORY_OP_DONE = {"COMPLETED", "SUCCESS", "SUCCEEDED", "DONE"}
 _MEMORY_OP_FAILED = {"FAILED", "ERROR", "CANCELLED", "CANCELED"}
 
+# Model for the closed-world, forced-JSON internal calls — legacy-doc enrichment,
+# the consistency judge, PR distillation, and gap detection. These require a model
+# that honors json_output; the org assistant's default is NOT guaranteed to, and
+# an unsupported or JSON-incapable default fails silently (a 200 whose body is an
+# "LLM Error: Model ... is not supported" string, or a non-JSON answer → zero
+# results). Must be a model Backboard's /models endpoint lists for this account.
+CLOSED_WORLD_LLM_PROVIDER = "anthropic"
+CLOSED_WORLD_MODEL_NAME = "claude-sonnet-4-5-20250929"
+
 
 class BackboardSettings(BaseSettings):
     model_config = SettingsConfigDict(
