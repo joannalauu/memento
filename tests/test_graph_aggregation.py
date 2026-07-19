@@ -173,6 +173,20 @@ async def test_repo_and_feature_filters_apply_at_the_query(graph_env):
     ]
 
 
+async def test_multi_repo_filter_uses_in_query(graph_env):
+    # A comma-separated `repo` (multi-repo scoping from the UI) becomes an $in;
+    # a single repo stays a plain equality (asserted above).
+    _, _, queries = graph_env
+    await build_graph(ORG_ID, repo="acme/web,acme/api")
+    assert queries == [
+        {
+            "orgId": ORG_ID,
+            "deletedAt": None,
+            "anchors.repo": {"$in": ["acme/web", "acme/api"]},
+        }
+    ]
+
+
 async def test_cache_hits_within_ttl_and_keys_by_scope(graph_env):
     decisions, _, queries = graph_env
     decisions.append(make_decision(files=["a.py"]))

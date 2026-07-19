@@ -15,7 +15,6 @@ import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
@@ -81,7 +80,7 @@ export function OnboardingPage() {
               <p className="text-destructive text-sm">{errorMessage}</p>
             )}
           </CardContent>
-          <CardFooter>
+          <div className="mt-4 px-6">
             <Button
               type="submit"
               className="w-full"
@@ -92,7 +91,7 @@ export function OnboardingPage() {
               )}
               Create organization
             </Button>
-          </CardFooter>
+          </div>
         </form>
       </Card>
     </div>

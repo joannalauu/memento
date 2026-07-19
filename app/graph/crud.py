@@ -122,7 +122,13 @@ async def build_graph(
     """
     query: dict[str, object] = {"orgId": org_id, "deletedAt": None}
     if repo:
-        query["anchors.repo"] = repo
+        # `repo` may be a comma-separated list (multi-repo scoping from the UI).
+        # One repo stays an equality match; several become an `$in`.
+        repo_names = [name for name in (r.strip() for r in repo.split(",")) if name]
+        if len(repo_names) == 1:
+            query["anchors.repo"] = repo_names[0]
+        elif repo_names:
+            query["anchors.repo"] = {"$in": repo_names}
     if feature:
         query["feature"] = feature
     decisions = await _load_decisions(query)

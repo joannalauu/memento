@@ -177,7 +177,7 @@ function EmptyState({
                 required
               />
             </div>
-            <DialogFooter>
+            <div className="mt-4 flex justify-end">
               <Button
                 type="submit"
                 disabled={createKey.isPending || !label.trim()}
@@ -185,7 +185,7 @@ function EmptyState({
                 {createKey.isPending && <Loader2 className="animate-spin" />}
                 Generate
               </Button>
-            </DialogFooter>
+            </div>
           </form>
         </DialogContent>
       </Dialog>

@@ -34,7 +34,11 @@ export const graphApi = {
     request<GraphPayload>(`/orgs/${orgId}/graph`, {
       signal,
       params: {
-        repo: filters?.repo,
+        // The endpoint takes a comma-separated `repo`; sort so the scope (and
+        // thus the server cache key + client query key) is order-independent.
+        repo: filters?.repos?.length
+          ? [...filters.repos].sort().join(",")
+          : undefined,
         feature: filters?.feature,
         // The endpoint expects a comma-separated `types` string.
         types: filters?.types?.length ? filters.types.join(",") : undefined,

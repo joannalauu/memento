@@ -188,7 +188,8 @@ export interface GraphPayload {
 
 /** Optional filters for `GET /orgs/{org_id}/graph`. */
 export interface GraphFilters {
-  repo?: string
+  /** Repos to include (full `owner/name`). Omitted/empty = every repo. */
+  repos?: string[]
   feature?: string
   /** Node types to include, e.g. `["decision", "feature"]`. */
   types?: NodeType[]

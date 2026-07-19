@@ -24,9 +24,10 @@ async def get_org_graph_endpoint(
 ) -> GraphPayload:
     """The org's knowledge graph as {nodes, links} for react-force-graph.
 
-    Optional filters: ?repo= (anchors.repo), ?feature=, and ?types= (comma-
-    separated node types, e.g. `decision,feature` for a files-hidden
-    overview). Cached ~60s per scope. Only a member of the org may view it.
+    Optional filters: ?repo= (anchors.repo; comma-separated for multi-repo
+    scoping, e.g. `acme/web,acme/api`), ?feature=, and ?types= (comma-separated
+    node types, e.g. `decision,feature` for a files-hidden overview). Cached
+    ~60s per scope. Only a member of the org may view it.
     """
     org: Org = await get_org(org_id)
     if org is None:

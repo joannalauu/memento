@@ -11,14 +11,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import type { ForceGraphMethods } from "react-force-graph-2d"
 
-import { queryKeys, useOrgGraph } from "@/lib/api"
+import { queryKeys, useOrgGraph, useOrgRepos } from "@/lib/api"
+import type { GraphFilters, GraphPayload } from "@/lib/api"
 import { useActiveOrg } from "@/components/app-shell/org-context"
 import { useTheme } from "@/components/app-shell/theme-context"
 import { AskBar } from "./AskBar"
 import { GraphView } from "./GraphView"
 import { Legend } from "./Legend"
 import { NodeDetailPanel } from "./NodeDetailPanel"
+import { RepoFilter } from "./RepoFilter"
 import type { GraphLink, GraphNode } from "./types"
+
+// Rendered while the user has deselected every repo — no fetch, just an empty
+// canvas so the live/highlight machinery still has a payload to sit on.
+const EMPTY_GRAPH: GraphPayload = { nodes: [], links: [] }
 import { useAskGraph } from "./useAskGraph"
 import { useLiveHighlight } from "./useLiveHighlight"
 import { useLiveTraversal } from "./useLiveTraversal"
@@ -30,9 +36,48 @@ export function GraphPage() {
   const [selected, setSelected] = useState<GraphNode | null>(null)
   const qc = useQueryClient()
 
-  const { data: graph, error: graphError } = useOrgGraph(orgId)
+  // Repo scoping (default: every repo). Track the repos turned OFF, so the
+  // "all selected" default is the empty set — no init against the async list.
+  const { data: repos = [] } = useOrgRepos(orgId)
+  const [deselected, setDeselected] = useState<Set<string>>(new Set())
+  const repoNames = useMemo(
+    () => repos.map((r) => `${r.owner}/${r.name}`),
+    [repos],
+  )
+  const selectedRepos = useMemo(
+    () => repoNames.filter((name) => !deselected.has(name)),
+    [repoNames, deselected],
+  )
+  const allSelected = deselected.size === 0
+  // Distinct from "no repos exist": the user turned every repo off on purpose.
+  const noneSelected = repoNames.length > 0 && selectedRepos.length === 0
 
-  const loading = !graph && !graphError
+  // Only send a filter for a strict subset; "all" hits the whole-org cache.
+  const filters = useMemo<GraphFilters | undefined>(
+    () => (allSelected ? undefined : { repos: selectedRepos }),
+    [allSelected, selectedRepos],
+  )
+
+  const { data: fetchedGraph, error: graphError } = useOrgGraph(orgId, filters, {
+    enabled: !!orgId && !noneSelected,
+  })
+  const graph = noneSelected ? EMPTY_GRAPH : fetchedGraph
+
+  const toggleRepo = useCallback((name: string) => {
+    setDeselected((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }, [])
+  const selectAllRepos = useCallback(() => setDeselected(new Set()), [])
+  const clearRepos = useCallback(
+    () => setDeselected(new Set(repoNames)),
+    [repoNames],
+  )
+
+  const loading = !noneSelected && !graph && !graphError
 
   // Shared with the live layer so it can drive zoom/particles imperatively.
   const graphRef = useRef<ForceGraphMethods<GraphNode, GraphLink> | undefined>(
@@ -66,7 +111,7 @@ export function GraphPage() {
   askStreamingRef.current = askGraph.status === "streaming"
 
   const { status: liveStatus } = useLiveTraversal(orgId, {
-    enabled: !!graph,
+    enabled: !!fetchedGraph && !noneSelected,
     onEvent: (e) => {
       if (!askStreamingRef.current) enqueue(e)
     },
@@ -78,9 +123,11 @@ export function GraphPage() {
     },
   })
 
-  // Clear selection + any in-flight live state whenever the active org changes.
+  // Clear selection, repo scoping, + any in-flight live state whenever the
+  // active org changes (repo names are org-specific).
   useEffect(() => {
     setSelected(null)
+    setDeselected(new Set())
     clear()
     reset()
   }, [orgId, clear, reset])
@@ -98,6 +145,15 @@ export function GraphPage() {
   return (
     <div className="relative flex h-full min-h-0">
       <div className="relative min-w-0 flex-1">
+        {repoNames.length > 0 && (
+          <RepoFilter
+            repos={repoNames}
+            deselected={deselected}
+            onToggle={toggleRepo}
+            onSelectAll={selectAllRepos}
+            onClear={clearRepos}
+          />
+        )}
         {loading && (
           <div className="text-muted-foreground grid h-full place-items-center text-sm">
             Loading…
@@ -110,7 +166,12 @@ export function GraphPage() {
             </p>
           </div>
         )}
-        {graph && (
+        {noneSelected && (
+          <div className="text-muted-foreground grid h-full place-items-center text-sm">
+            No repositories selected.
+          </div>
+        )}
+        {!noneSelected && graph && (
           <>
             <GraphView
               data={graph}
@@ -136,9 +197,9 @@ export function GraphPage() {
               onCitationClick={hop}
               getNodeLabel={(id) => nodesById.get(id)?.label ?? null}
             />
-            {(liveStatus === "following" || liveStatus === "waiting") && (
+            {liveStatus === "following" && (
               <div className="text-muted-foreground bg-background/70 pointer-events-none absolute top-3 right-3 rounded-full border px-2.5 py-1 text-xs backdrop-blur">
-                {liveStatus === "following" ? "● live" : "waiting for session…"}
+                ● live
               </div>
             )}
           </>
