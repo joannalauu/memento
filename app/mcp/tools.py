@@ -256,6 +256,8 @@ async def _find_entry_points(ctx: McpContext, args: dict[str, Any]) -> Any:
         org_id=ctx.org.id,
         repo_id=repo_id,
         limit=limit,
+        session_id=ctx.session_id,
+        source=ctx.source,
     )
     return [e.model_dump(mode="json") for e in entries]
 
@@ -282,7 +284,12 @@ async def _walk_graph(ctx: McpContext, args: dict[str, Any]) -> Any:
 
     try:
         walk = await walk_graph(
-            node_id, org_id=ctx.org.id, edge_kinds=edge_kinds, depth=depth
+            node_id,
+            org_id=ctx.org.id,
+            edge_kinds=edge_kinds,
+            depth=depth,
+            session_id=ctx.session_id,
+            source=ctx.source,
         )
     except ValueError as exc:
         # Malformed/unknown node id, cross-org feature node, or bad depth —
@@ -442,17 +449,22 @@ MCP_TOOLS: list[McpTool] = [
     McpTool(
         name="find_entry_points",
         description=(
-            "Search your org's knowledge graph semantically and return the nodes "
-            "most relevant to a natural-language query — the places to start a "
-            "graph walk. Feed a returned nodeId into walk_graph to explore its "
-            "neighbors."
+            "Semantically searches your org's decision knowledge graph and returns "
+            "the nodes to start a walk from. Reach for it for "
+            "questions about why the code is the way it is, who owns or introduced "
+            "a decision, or how decisions connect and evolved."
         ),
         input_schema={
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Natural-language description of what you're looking for.",
+                    "description": (
+                        "Natural-language description of what you're looking for — "
+                        "phrase it as the user's question, e.g. 'why do we split "
+                        "MCC and ARO auth', 'decisions about the command wire "
+                        "format', 'who owns the middleware ordering'."
+                    ),
                 },
                 "repo": {
                     "type": "string",
@@ -473,12 +485,11 @@ MCP_TOOLS: list[McpTool] = [
     McpTool(
         name="walk_graph",
         description=(
-            "Walk your org's knowledge graph from one node, returning its "
-            "neighbors grouped by edge kind (governs, introduced, made, "
-            "belongs_to, superseded_by, supersedes). Get a starting nodeId from "
-            "find_entry_points. Optionally filter to specific edge kinds (e.g. "
-            "['superseded_by'] to trace a decision's evolution) and set depth=2 "
-            "to expand one further hop."
+            "From a node (get one from find_entry_points), returns its neighbors "
+            "grouped by edge kind: governs (files it constrains), introduced (its "
+            "PR), made (its author), belongs_to (its feature), superseded_by / "
+            "supersedes (evolution). Reach for it to trace how a decision connects "
+            "or evolved."
         ),
         input_schema={
             "type": "object",
@@ -502,12 +513,16 @@ MCP_TOOLS: list[McpTool] = [
                     },
                     "description": (
                         "Optional. Only follow these edge kinds. Omit to return "
-                        "every kind."
+                        "every kind. E.g. ['superseded_by'] to trace a decision's "
+                        "evolution, ['governs'] to list the files it constrains."
                     ),
                 },
                 "depth": {
                     "type": "integer",
-                    "description": "Hops to expand: 1 (direct neighbors) or 2. Default 1.",
+                    "description": (
+                        "Hops to expand: 1 (direct neighbors) or 2 (also each "
+                        "neighbor's own neighbors). Default 1."
+                    ),
                 },
             },
             "required": ["node_id"],

@@ -11,6 +11,8 @@ from app.backboard.models import Anchors, MemoryIndex
 from app.context_engine import graph_tools
 from app.context_engine.graph_tools import find_entry_points, walk_graph
 from app.graph.ids import decision_id, engineer_id, feature_id, file_id, pr_id
+from app.mcp.tools import McpContext, _find_entry_points, _walk_graph
+from app.orgs.models import Org
 from app.traversal import traversal_channel
 
 ORG_ID = PydanticObjectId()
@@ -475,3 +477,55 @@ async def test_no_session_id_emits_nothing(
     await walk_graph(decision_id(origin.id), org_id=ORG_ID)
 
     assert events == []
+
+
+# --- MCP handler forwarding --------------------------------------------------
+# The engine emits only when handed a session_id/source; the MCP tool handlers
+# are the layer that must thread McpContext.session_id/source through to it.
+# These guard that handoff (a regression: the handlers previously dropped both,
+# so tools returned correct data but no traversal ever animated).
+
+
+def _mcp_ctx(bb, session_id):
+    return McpContext(
+        principal=None,  # unused by the graph handlers
+        org=Org.model_construct(id=ORG_ID, bbAssistantId="a"),
+        github=None,  # unused by the graph handlers
+        backboard=bb,
+        session_id=session_id,
+    )
+
+
+async def test_mcp_find_entry_points_handler_forwards_session(
+    bb, entry_docs, subscribe_traversal
+):
+    docs, _ = entry_docs
+    docs.append(make_doc(bb_id="bb-1"))
+    bb.search_memories.return_value = semantic_result(hit("bb-1"))
+    events = subscribe_traversal("sess-mcp")
+
+    result = await _find_entry_points(_mcp_ctx(bb, "sess-mcp"), {"query": "auth"})
+
+    assert [e.nodeId for e in events] == [r["nodeId"] for r in result]
+    assert all(
+        e.kind == "entry" and e.sessionId == "sess-mcp" and e.source == "mcp"
+        for e in events
+    )
+
+
+async def test_mcp_walk_graph_handler_forwards_session(walk_env, subscribe_traversal):
+    docs, _, _ = walk_env
+    origin = make_doc(bb_id="bb-origin", files=["app/auth.py"])
+    docs.append(origin)
+    events = subscribe_traversal("sess-mcp")
+
+    walk = await _walk_graph(
+        _mcp_ctx(None, "sess-mcp"), {"node_id": decision_id(origin.id)}
+    )
+
+    returned = {n["nodeId"] for ns in walk["neighbors"].values() for n in ns}
+    assert {e.nodeId for e in events} == returned
+    assert all(
+        e.kind == "hop" and e.sessionId == "sess-mcp" and e.source == "mcp"
+        for e in events
+    )
