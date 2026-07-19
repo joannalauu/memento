@@ -1,173 +1,84 @@
-# Hackplate
+# Memento
 
-A FastAPI metaframework for 24–48 hour hackathons. Clone it, run one command, and have a working API with auth, a database, and a dev CLI, configured by swapping plates, not rewriting code.
+Memento is an engineering-memory system for teams that ship with coding agents. It captures Claude Code session transcripts, distills them together with merged PR diffs into structured memories anchored to code, and stores them in an org-wide knowledge graph. That memory is then served back two ways:
 
-## How it works
+- **A web app** where engineers explore the graph and ask questions over it ("why does X work this way?"), with answers streamed alongside a live animation of the memory graph traversal that produced them.
+- **An MCP server** so coding agents can query the same memory mid-session — `find_related_context`, `check_consistency`, `find_entry_points`, `walk_graph` — plus GitHub-backed tools (`search_code`, `get_file`, `list_repos`, …).
 
-Hackplate separates two concerns:
+The capture loop: the [`@memento-ai/hook`](packages/claude-hook/README.md) npm package installs a Claude Code `SessionEnd` hook that redacts, gzips, and ships each transcript to the API. When a PR merges, a GitHub App webhook kicks off a distillation job that matches the PR's diff to the agent sessions that produced it and writes the resulting memories into the graph.
 
-- **Framework internals** live in `app/hackplate/` and are not meant to be edited.
-- **Your code** lives in `app/` alongside the framework — routes, schemas, models, feature slices.
+## Repo structure
 
-Backend integrations are called **plates**. Active plates are selected via environment variables; switching plates is a one-liner that requires no changes to your route handlers.
+Three deliverables in one repo:
 
 ```
-HACKPLATE_DB=sqlite    # sqlite | postgres | supabase | mongo
-HACKPLATE_AUTH=local   # local | auth0 | keycloak
+app/                    ← FastAPI backend (Python 3.13, uv)
+├── main.py             ← router registration
+├── claude_hook/        ← transcript ingest endpoint (POST /ingest/agent-sessions)
+├── distillation/       ← PR diff + sessions → memories pipeline (async job queue)
+├── context_engine/     ← code anchors, retrieval, staleness, consistency checks
+├── graph/              ← graph read APIs, live WS updates, SSE Q&A (/graph/ask)
+├── mcp/                ← MCP server (JSON-RPC 2.0, Streamable HTTP) at /mcp
+├── github/             ← GitHub App client, webhook, install flow, code tools
+├── backboard/          ← LLM client (Backboard SDK) used by distillation & Q&A
+├── orgs/               ← users, orgs, invites (custom Beanie User model)
+├── api_auth/           ← API keys used by the hook and MCP clients
+└── hackplate/          ← framework internals — do not modify
+
+frontend/               ← React SPA (Vite, TypeScript, Tailwind, shadcn)
+└── src/features/       ← graph explorer + ask, admin, api-keys, auth, documents
+
+packages/claude-hook/   ← @memento-ai/hook — the Claude Code SessionEnd hook (npm)
 ```
 
-## Quickstart
+The backend is built on **Hackplate**, a FastAPI template where framework internals live in `app/hackplate/` and integrations ("plates") are selected in `.env`. Memento runs on the **mongo** DB plate (the user model and all domain models are Beanie documents) with **local** JWT auth. See [CLAUDE.md](CLAUDE.md) for the full Hackplate reference (CLI commands, plate system, conventions).
+
+## Dev environment
+
+Prerequisites: Python 3.13+, Node 18+, MongoDB (local or a connection string), and a [Backboard](https://app.backboard.io) API key.
+
+**Backend**
 
 ```bash
-git clone <repo> my-project && cd my-project
 pip install uv && uv sync
-hackplate init
-hackplate run
+hackplate init                 # creates .env, generates SECRET_KEY, installs pre-commit
+# fill in .env: MONGO_* (or MONGO_URL), BACKBOARD_API_KEY, GITHUB_* (see below)
+hackplate run                  # uvicorn on :8000, hot reload
 ```
 
-`hackplate init` installs dependencies, creates `.env` from the template, prompts for your initial plate selections, generates a secret key, and installs pre-commit hooks. Fill in any remaining `.env` values (database URLs, OAuth credentials) before running.
-
-## Plates
-
-### Database
-
-| Plate | Driver | Notes |
-|---|---|---|
-| `sqlite` | aiosqlite | Zero config, default |
-| `postgres` | asyncpg | Provide `POSTGRES_URL` or individual fields |
-| `supabase` | asyncpg | Same as postgres, SSL required by default |
-| `mongo` | Beanie ODM | Motor async driver |
-
-SQLite, Postgres, and Supabase use SQLModel/SQLAlchemy for schema management. MongoDB uses Beanie document models. Switching between SQL and Mongo requires updating the user model base class (see [User Model](#user-model)).
-
-### Auth
-
-| Plate | Description |
-|---|---|
-| `local` | JWT-based, no external dependencies |
-| `auth0` | Auth0 OAuth, requires Auth0 tenant credentials |
-| `keycloak` | Keycloak SSO, requires Docker or an external instance |
-
-Auth plates automatically register login/logout/token routes and provide a `get_current_user` dependency available through `app/dependencies.py`.
-
-## Project structure
-
-```
-app/
-├── main.py              ← register routers here
-├── lifespan.py          ← pre/post startup hooks (user-editable)
-├── dependencies.py      ← get_db and get_current_user wrappers (user-editable)
-└── hackplate/           ← framework internals — do not modify
-    ├── cli.py
-    ├── config.py
-    ├── hackplate_types.py
-    ├── websocket.py
-    ├── lifespan.py
-    ├── toml_settings.py
-    └── plates/
-        ├── auth_plates/
-        │   ├── local/
-        │   ├── auth0/
-        │   └── keycloak/
-        └── db_plates/
-            ├── sqlite/
-            ├── postgres/
-            └── mongo/
-```
-
-Add your own code as vertical slices under `app/`. Register routers in `app/main.py` inside `register_routes()`.
-
-## Adding a feature
+**Frontend**
 
 ```bash
-hackplate startfeature <name>
+cd frontend
+npm install
+npm run dev                    # Vite on :5173, talks to the API at :8000 (CORS pre-configured)
 ```
 
-Creates `app/<name>/` with `routes.py`, `schemas.py`, `crud.py`, `models.py`, and `__init__.py`, and registers the model in `migrations/register_models.py`.
+**Hook package**
 
 ```bash
-hackplate dropfeature <name>   # removes the directory and its model registration
+cd packages/claude-hook
+npm install
+npm run build && npm test
 ```
 
-## User model
-
-The active user model is set in `pyproject.toml`:
-
-```toml
-[tool.hackplate]
-auth_user_model = "app.hackplate.user.models.User"
-```
-
-- SQL plates: model must inherit from `AbstractUser` (SQLModel)
-- Mongo plate: model must inherit from `AbstractUserDocument` (Beanie Document)
-
-The default `User` lives at `app/hackplate/user/models.py`. To extend it, create your own model class in `app/`, update `auth_user_model`, and register it in `migrations/register_models.py`.
-
-## Configuration
-
-Two sources, two purposes:
-
-- **`.env`** — deployment-varying values: plate selection, database URLs, OAuth credentials, secret keys.
-- **`pyproject.toml` `[tool.hackplate]`** — structural project decisions: active user model, Alembic toggle.
-
-Never put deployment-varying values in `pyproject.toml` or structural decisions in `.env`.
-
-## CLI reference
-
-| Command | Description |
-|---|---|
-| `hackplate run` | Start uvicorn (`-m dev`\|`prod`, default `dev`; `prod` runs `HACKPLATE_WORKERS` workers, no reload) |
-| `hackplate run --docker-compose` | Start full stack via Docker Compose (`-m dev`\|`prod` selects the compose profile) |
-| `hackplate init` | First-time repo setup (runs once) |
-| `hackplate getplates` | Show active auth and db plates |
-| `hackplate setplate auth <plate>` | Switch auth plate |
-| `hackplate setplate db <plate>` | Switch db plate |
-| `hackplate setmode safe\|fast` | Switch Claude Code operating mode |
-| `hackplate getmode` | Show the current Claude Code operating mode |
-| `hackplate startfeature <name>` | Scaffold a vertical slice under `app/` |
-| `hackplate dropfeature <name>` | Remove a feature directory |
-| `hackplate regenkey` | Regenerate `SECRET_KEY` in `.env` |
-| `hackplate precommit` | Install and run pre-commit on all files |
-| `hackplate clean` | Remove cache and build artifacts |
-| `hackplate kcsync` | Sync Keycloak realm config to `settings.json` |
-| `hackplate down` | Stop Docker containers |
-
-Run `hackplate --help` for the full reference.
-
-## Migrations
-
-Schema is managed automatically by default (`alembic = false` in `pyproject.toml` — SQLModel creates tables on startup). To switch to Alembic:
-
-```toml
-[tool.hackplate.db]
-alembic = true
-```
+To exercise the full capture loop locally, point the hook at your dev server:
 
 ```bash
-uv run alembic revision --autogenerate -m "description"
-uv run alembic upgrade head
+npx @memento-ai/hook install --api-key <key> --url http://localhost:8000
 ```
 
-## WebSockets
+(API keys are minted in the web app under **API Keys**.)
 
-`app/hackplate/websocket.py` exports `WSConnectionManager` for broadcasting to all connected clients, and `get_db_from_ws` for injecting a database session into WebSocket handlers.
+`.env.example` documents every variable.
 
-## Stack
+## Production requirements
 
-- **FastAPI** + **Uvicorn** — async web framework and server
-- **SQLModel** / **SQLAlchemy** (async) — ORM and schema management for SQL plates
-- **Beanie** — async ODM for MongoDB
-- **fastapi-users** — user management primitives
-- **Pydantic v2** + **pydantic-settings** — validation and config
-- **Alembic** — optional SQL migrations
-- **Typer** — CLI framework
-- **uv** — dependency and virtual environment management
-- **pytest** + **pytest-asyncio** — testing
+Memento is a hosted product; several pieces only work when the API is publicly reachable:
 
-## For AI agents
-
-Read `CLAUDE.md` (reasoning-friendly, supports `@import`) and `AGENTS.md` (imperative, cross-tool standard) before making changes. The `.claude/settings.json` pre-configures allowed commands and post-edit hooks.
-
-`CLAUDE.md` imports the gitignored `modes/CLAUDE.mode.md`, which re-exports either `modes/CLAUDE.safe.md` or `modes/CLAUDE.fast.md`. Switch modes with `hackplate setmode safe|fast`; `hackplate init` creates `modes/CLAUDE.mode.md` defaulting to `safe`.
-
-The single extension pattern: add routes in `app/main.py` via `register_routes()`, inject dependencies from `app/dependencies.py`, and scaffold new slices with `hackplate startfeature`. Don't modify `app/hackplate/` unless extending a plate interface.
+- **Host the API** at a public URL. The MCP server (`<host>/mcp`) and the ingest endpoint (`<host>/ingest/agent-sessions`) are called from engineers' machines and agents, and the GitHub webhook must be able to reach `<host>/github/webhook`. Run with `hackplate run -m prod` (uvicorn, `HACKPLATE_WORKERS` workers) or the provided `Dockerfile` / `docker-compose.yml`.
+- **Publish `@memento-ai/hook` to the npm registry.** The install flow is `npx @memento-ai/hook install`, and the committed hook entry runs `npx -y @memento-ai/hook run` on every session end — both resolve the package from npm. Its default ingest URL must point at the production API.
+- **Host the frontend.** `cd frontend && npm run build` produces a static SPA in `dist/`; serve it from any static host.
+- **Memento GitHub App.** Create a GitHub App (Settings → Developer settings → GitHub Apps) and set in `.env`: `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY` (or `GITHUB_PRIVATE_KEY_PATH`), and — for the install/webhook flow — `GITHUB_APP_SLUG` and `GITHUB_WEBHOOK_SECRET`. Point the App's **Setup URL** at `<host>/github/setup` and its **webhook URL** at `<host>/github/webhook`. Users install the Memento GitHub App into their own accounts through the GitHub integration flow in the app.
+- **MongoDB** (e.g. Atlas) — set `HACKPLATE_DB=mongo` and `MONGO_URL`.
+- **Env** - `.env.example` documents all required env variables.
